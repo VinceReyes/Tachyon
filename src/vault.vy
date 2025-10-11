@@ -103,7 +103,7 @@ def remove_liquidity(amount: uint256):
 
 @external
 @nonreentrant
-def payout(_to: address, amount: uint256):
+def payout(_to: address, amount: uint256) -> bool:
     assert self.authorized_perp_address != empty(address), "Perp address not authorized"
     assert msg.sender == self.authorized_perp_address, "Only authorized perp address can payout"
     assert _to != empty(address), "No address provided"
@@ -113,6 +113,8 @@ def payout(_to: address, amount: uint256):
     self.total_usd_balance -= amount
     success: bool = extcall ERC20(USDC_ADDRESS).transfer(_to, amount)
     assert success, "Transfer failed"
+
+    return True
 
 @external
 def authorize_perp_address(_address: address):
