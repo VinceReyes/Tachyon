@@ -45,6 +45,9 @@ struct Position:
 
 @deploy
 def __init__(_authorized_vault_address: address, _market_id: uint256, _market_name: String[64], _authorized_funding_updater: address, _margin_token_address: address):
+    assert _authorized_vault_address != empty(address)
+    assert _authorized_funding_updater != empty(address)
+
     OWNER = msg.sender
     authorized_vault_address = _authorized_vault_address
     market_id = _market_id
@@ -56,42 +59,61 @@ def __init__(_authorized_vault_address: address, _market_id: uint256, _market_na
     self.last_funding_timestamp = 0
 
 @internal
-def update_funding(_funding_rate: int256):
-    assert msg.sender == authorized_funding_updater, "Only authorized funding updater can update funding"
-    self.funding_rate = _funding_rate
-    self.last_funding_timestamp = block.timestamp
-
-@internal
 def _get_market_price() -> uint256:
+    # TODO 
     # this function needs to call the oracle to get the current price of the perp market or some outside script that will return the market price
     return 0
 
 @internal
-def _get_funding_impact() -> uint256:
+def _get_funding_impact() -> int256:
+    # TODO
     # function to get the funidng impact on a particular position
-    # this will require some clever programming that possibly gets kept track of from both that runs a script to keep trakc of funding payments for each position
+    # this will require some clever programming that possibly gets kept track of from a bot that runs a script to keep track of funding payments for each position
     return 0
 
+@internal
+def _calculate_health_factor(_address: address) -> int256:
+    assert _address != empty(address), "No address provided"
+    assert self.positions[_address].is_open, "No position open for address"
+
+    pos: Position = self.positions[_address]
+
+    entry_price: uint256 = pos.entry_price
+    mark_price: uint256 = self._get_market_price()
+    margin: uint256 = pos.margin
+    leverage: uint256 = pos.leverage
+
+    price_diff: int256 = convert(mark_price, int256) - convert(entry_price, int256)
+
+    pnl: int256 = (convert(margin, int256) * convert(leverage, int256) * price_diff) // convert(entry_price, int256)
+
+    if not pos.direction:
+        pnl = -pnl
+
+    equity: int256 = convert(margin, int256) + pnl
+
+    return equity
+
+
 @external
-@payable
 @nonreentrant
 def open_position(_margin: uint256, _leverage: uint256, _direction: bool):
     assert not self.positions[msg.sender].is_open, "Already opened postion"
     assert _margin > 0
-    assert _leverage >= 0
+    assert _leverage > 0
 
     _entry_price: uint256 = self._get_market_price()
 
-    allowed: uint256 = staticcall ERC20(margin_token_address).allowance(msg.sender, OWNER)
+    allowed: uint256 = staticcall ERC20(margin_token_address).allowance(msg.sender, self)
     assert allowed >= _margin
-    success: bool = extcall ERC20(margin_token_address).transfer(self, _margin)
+    success: bool = extcall ERC20(margin_token_address).transferFrom(msg.sender, self, _margin)
     assert success
 
     new_positions: Position = Position(
         margin = _margin,
         leverage = _leverage,
         entry_price = _entry_price,
-        size = _margin * _entry_price,
+        size = _margin * _leverage,
         funding_rate_snapshot = self.funding_rate,
         direction = _direction,
         is_open = True
@@ -106,17 +128,82 @@ def close_position():
 
     current_position: Position = self.positions[msg.sender]
     current_price: uint256 = self._get_market_price()
-    funding_impact: uint256 = self._get_funding_impact()
-    pnl: uint256 = current_position.entry_price - current_price
-    adjusted_pnl: uint256 = pnl - funding_impact
+    funding_impact: int256 = self._get_funding_impact()
+    price_differential: int256 = convert(current_price, int256) - convert(current_position.entry_price, int256)
+    pnl: int256 = 0
+    if self.positions[msg.sender].direction:
+        raw_pnl: int256 = price_differential * convert(self.positions[msg.sender].size, int256)
+        pnl = raw_pnl // convert(self.positions[msg.sender].entry_price, int256)
+    else:
+        raw_pnl: int256 = -price_differential * convert(self.positions[msg.sender].size, int256)
+        pnl = raw_pnl // convert(self.positions[msg.sender].entry_price, int256)
+    adjusted_pnl: int256 = pnl - funding_impact
+    assert self.positions[msg.sender].margin > 0, "Invalid margin"
+    assert convert(self.positions[msg.sender].margin, int256) + adjusted_pnl >= 0, "Invalid equity, cannot close position"
 
+    payout_pnl: uint256 = 0
+    profit: uint256 = 0
+    remaining_margin: uint256 = 0
+    to_vault_margin: uint256 = 0
+   
     if adjusted_pnl > 0:
-        success: bool = extcall VAULT(authorized_vault_address).payout(msg.sender, adjusted_pnl)
-        assert success, "Could not payout"
+        payout_pnl = convert(adjusted_pnl, uint256) + self.positions[msg.sender].margin
+        profit = payout_pnl - self.positions[msg.sender].margin
+        remaining_margin = self.positions[msg.sender].margin
+   
+    elif convert(self.positions[msg.sender].margin, int256) + adjusted_pnl > 0:
+        payout_pnl = 0
+        profit = 0
+        remaining_margin = convert((convert(self.positions[msg.sender].margin, int256) + adjusted_pnl), uint256)
+        to_vault_margin = self.positions[msg.sender].margin - remaining_margin
+    
+    else:
+        success_send_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, self.positions[msg.sender].margin)
+        assert success_send_vault, "Failed to send margin from full loss back to vault upon close"
 
+        self.positions[msg.sender].margin = 0
+        self.positions[msg.sender].is_open = False
+        return
+
+    if profit > 0:
+        success_profit: bool = extcall VAULT(authorized_vault_address).payout(msg.sender, profit)
+        assert success_profit, "Could not payout profit"
+    
+    if remaining_margin > 0:
+        success_margin: bool = extcall ERC20(margin_token_address).transfer(msg.sender, remaining_margin)
+        assert success_margin, "Could not payout margin"
+    
+    if to_vault_margin > 0:
+        success_to_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, to_vault_margin)
+        assert success_to_vault, "Could not send trader's lost margin to vault"
+
+    self.positions[msg.sender].margin = 0
     self.positions[msg.sender].is_open = False
 
 @external
-def liquidate():
-    pass
+@nonreentrant
+def liquidate(_address: address):
+    assert msg.sender != _address, "cannot liquidate your own position"
+    user_equity: int256 = self._calculate_health_factor(_address)
+    user_margin: uint256 = self.positions[_address].margin
+    threshold: int256 = (convert(user_margin, int256) * 20) // 100
+
+    if user_equity <= threshold:
+        self.positions[_address].is_open = False
+        self.positions[_address].margin = 0
+
+        reward: uint256 = (user_margin * 5) // 100
+
+        vault_success: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, user_margin)
+        assert vault_success, "Failed to transfer remaining margin to vault"
+
+        success: bool = extcall VAULT(authorized_vault_address).payout(msg.sender, reward)
+        assert success, "Failed to payout reward"
+
+@external
+def update_funding(_funding_rate: int256):
+    assert msg.sender == authorized_funding_updater, "Only authorized funding updater can update funding"
+    self.funding_rate = _funding_rate
+    self.last_funding_timestamp = block.timestamp
+
     
