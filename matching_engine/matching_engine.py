@@ -18,6 +18,16 @@ class Status(Enum):
     OPEN = "open"
 
 @dataclass
+class Trade:
+    timestamp: int
+    trade_id: int
+    price: float
+    quantity: float
+    taker_id: str
+    maker_id: str
+    taker_side: Side
+
+@dataclass
 class Order:
     trader_id: str # wallet address
     order_id: int
@@ -35,12 +45,30 @@ class OrderBook:
     def __init__(self, _asset_name):
         self.asset_name: str = _asset_name
         self.order_id: int = 0
+        self.trade_id: int = 0
         self.bids: SortedDict = SortedDict()
         self.asks: SortedDict = SortedDict()
+        self.trade_events = []
+
+    def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side):
+        trade: Trade = Trade(
+            timestamp = time.time(),
+            trade_id = self.increment_trade_id(),
+            price = order.price,
+            quantity = _fill_quantity,
+            taker_id = _taker_id,
+            maker_id = _maker_id,
+            taker_side = _taker_side,
+        )
+        self.trade_events.append(trade)
 
     def increment_order_id(self) -> int:
         self.order_id += 1
         return self.order_id
+    
+    def increment_trade_id(self) -> int:
+        self.trade_id += 1
+        return self.trade_id
 
     def add_limit_order(
             self,
@@ -128,9 +156,12 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
+                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
                     else:
+                        resting_filled_quantity = current_quantity
+                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side)
                         current_order.quantity = current_order.quantity - current_quantity
                         current_quantity = 0
 
@@ -147,30 +178,39 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
+                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
                     else:
+                        resting_filled_quantity = current_quantity
+                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side)
                         current_order.quantity = current_order.quantity - current_quantity
                         current_quantity = 0
 
                     if current_quantity == 0:
-                        return
+                        break
                 for order in order_removal_list:
                     order_list.remove(order)
                 if not order_list:
                     del book[price_level]
-            pass
 
-# market = OrderBook("BTC")
+market = OrderBook("BTC")
 
-# market.add_limit_order("01", Side.BUY, 0.1, 0.2, 0, 2)
-# market.add_limit_order("01", Side.BUY, 0.1, 0.7, 0, 10)
+market.add_limit_order("01", Side.BUY, 0.1, 0.2, 0, 2)
+market.add_limit_order("01", Side.BUY, 0.1, 0.7, 0, 10)
 
-# print(market.bids[0.1])
-# print()
+print(market.bids[0.1])
+print()
 
 # market.remove_limit_order("01", 1, Side.BUY, 0.1)
 # print("removing order")
 # print()
 
-# print(market.bids[0.1])
+print(market.bids[0.1])
+print()
+
+market.market_order("02", Side.SELL, 0.1, 0.9, 2, 10)
+
+print(market.bids)
+print()
+print(market.trade_events)
