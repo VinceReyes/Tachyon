@@ -141,8 +141,24 @@ class OrderBook:
                 if not order_list:
                     del book[price_level]
         else:
-            # TODO
-            # Implement market sells
+            for price_level in reversed(book.keys()):
+                order_list = book[price_level]
+                order_removal_list = []
+                for resting_order in order_list:
+                    current_order = resting_order
+                    if current_quantity >= current_order.quantity:
+                        current_quantity = current_quantity - current_order.quantity
+                        order_removal_list.append(resting_order)
+                    else:
+                        current_order.quantity = current_order.quantity - current_quantity
+                        current_quantity = 0
+
+                    if current_quantity == 0:
+                        return
+                for order in order_removal_list:
+                    order_list.remove(order)
+                if not order_list:
+                    del book[price_level]
             pass
 
 # market = OrderBook("BTC")
