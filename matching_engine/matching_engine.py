@@ -26,6 +26,8 @@ class Trade:
     taker_id: str
     maker_id: str
     taker_side: Side
+    taker_fee: float
+    maker_fee: float
 
 @dataclass
 class Order:
@@ -49,8 +51,10 @@ class OrderBook:
         self.bids: SortedDict = SortedDict()
         self.asks: SortedDict = SortedDict()
         self.trade_events = []
+        self.MAKER_FEE: float = 0.0002
+        self.TAKER_FEE: float = 0.0006
 
-    def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side):
+    def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order):
         trade: Trade = Trade(
             timestamp = time.time(),
             trade_id = self.increment_trade_id(),
@@ -59,6 +63,8 @@ class OrderBook:
             taker_id = _taker_id,
             maker_id = _maker_id,
             taker_side = _taker_side,
+            taker_fee = (taker_order.margin * taker_order.leverage) * self.TAKER_FEE,
+            maker_fee = (order.margin * order.leverage) * self.MAKER_FEE
         )
         self.trade_events.append(trade)
 
@@ -69,6 +75,20 @@ class OrderBook:
     def increment_trade_id(self) -> int:
         self.trade_id += 1
         return self.trade_id
+    
+    def get_best_bid(self) -> float:
+        nearest_bid = max(self.bids)
+        return nearest_bid
+    
+    def get_best_ask(self) -> float:
+        nearest_ask = min(self.asks)
+        return nearest_ask
+    
+    def snapshot(self) -> dict:
+        book_snapshot = {} 
+        book_snapshot["bids"] = self.bids
+        book_snapshot["asks"] = self.asks
+        return book_snapshot
 
     def add_limit_order(
             self,
@@ -132,6 +152,13 @@ class OrderBook:
             _leverage: int,
             _margin: float,
     ):
+        if _quantity <= 0:
+            raise ValueError("Cannot send 0 or negative quantity orders")
+        if _margin <= 0:
+            raise ValueError("Margin is <= 0, need more margin")
+        if _price <= 0:
+            raise ValueError("Negative price values not allowed")
+        
         order: Order = Order(
             trader_id = _trader_id,
             order_id = self.increment_order_id(),
@@ -147,6 +174,10 @@ class OrderBook:
         )
 
         book = self.asks if order.side == Side.BUY else self.bids
+
+        if not book:
+            raise ValueError("No book depth to execute market order")
+
         current_quantity: float = _quantity
         
         if order.side == Side.BUY:
@@ -156,13 +187,14 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
-                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side)
+                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
                     else:
                         resting_filled_quantity = current_quantity
-                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side)
+                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_order.quantity = current_order.quantity - current_quantity
+                        current_order.status = Status.PARTIALLY_FILLED
                         current_quantity = 0
 
                     if current_quantity == 0:
@@ -178,13 +210,14 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
-                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side)
+                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
                     else:
                         resting_filled_quantity = current_quantity
-                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side)
+                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_order.quantity = current_order.quantity - current_quantity
+                        current_order.status = Status.PARTIALLY_FILLED
                         current_quantity = 0
 
                     if current_quantity == 0:
@@ -194,23 +227,23 @@ class OrderBook:
                 if not order_list:
                     del book[price_level]
 
-market = OrderBook("BTC")
+# market = OrderBook("BTC")
 
-market.add_limit_order("01", Side.BUY, 0.1, 0.2, 0, 2)
-market.add_limit_order("01", Side.BUY, 0.1, 0.7, 0, 10)
+# market.add_limit_order("01", Side.BUY, 0.1, 0.2, 0, 2)
+# market.add_limit_order("01", Side.BUY, 0.1, 0.7, 0, 10)
 
-print(market.bids[0.1])
-print()
-
-# market.remove_limit_order("01", 1, Side.BUY, 0.1)
-# print("removing order")
+# print(market.bids[0.1])
 # print()
 
-print(market.bids[0.1])
-print()
+# # market.remove_limit_order("01", 1, Side.BUY, 0.1)
+# # print("removing order")
+# # print()
 
-market.market_order("02", Side.SELL, 0.1, 0.9, 2, 10)
+# print(market.bids[0.1])
+# print()
 
-print(market.bids)
-print()
-print(market.trade_events)
+# market.market_order("02", Side.SELL, 0.1, 0.9, 2, 10)
+
+# print(market.bids)
+# print()
+# print(market.trade_events)
