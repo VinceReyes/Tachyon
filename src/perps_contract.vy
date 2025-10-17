@@ -24,11 +24,13 @@ funding_index: public(int256)
 funding_rate_per_second: public(int256)
 last_funding_timestamp: public(uint256)
 positions: public(HashMap[address, Position])
+limit_orders: public(HashMap[address, LimitOrder])
 
 # ------------------------------------------------------------------
 #                            IMMUTABLES
 # ------------------------------------------------------------------
 authorized_vault_address: immutable(address)
+authorized_matching_engine: immutable(address)
 market_id: immutable(uint256)
 market_name: immutable(String[64])
 authorized_funding_updater: immutable(address)
@@ -54,14 +56,25 @@ struct Position:
     direction: bool # true for long, false for short
     is_open: bool
 
+struct LimitOrder:
+    trader_address: address
+    leverage: uint256
+    margin: uint256
+    price: uint256
+    quantity: uint256
+    direction: bool # true for long, false for short
+    is_open: bool # will remain true even if partially filled, and false if fully filled
+    timestamp: uint256
+
 @deploy
-def __init__(_authorized_vault_address: address, _market_id: uint256, _market_name: String[64], _authorized_funding_updater: address, _margin_token_address: address, _oracle_address: address):
+def __init__(_authorized_vault_address: address, _market_id: uint256, _market_name: String[64], _authorized_funding_updater: address, _margin_token_address: address, _oracle_address: address, _authorized_matching_engine: address):
     assert _authorized_vault_address != empty(address)
     assert _authorized_funding_updater != empty(address)
     assert _oracle_address != empty(address)
 
     OWNER = msg.sender
     authorized_vault_address = _authorized_vault_address
+    authorized_matching_engine = _authorized_matching_engine
     market_id = _market_id
     market_name = _market_name
     authorized_funding_updater = _authorized_funding_updater
@@ -120,6 +133,106 @@ def _calculate_health_factor(_address: address) -> int256:
 
     return equity
 
+@external
+@nonreentrant
+def add_limit_order(_leverage: uint256, _margin: uint256, _price: uint256, _quantity: uint256, _direction: bool):
+    assert _leverage > 0, "leverage cannot be <= 0"
+    assert _margin > 0, "margin must be <= 0"
+    assert _price > 0, "price cannot be <= 0"
+    assert not self.positions[msg.sender].is_open, "cannot open limit with existing open position"
+    assert not self.limit_orders[msg.sender].is_open, "already have a limit order placed"
+
+    allowed: uint256 = staticcall ERC20(margin_token_address).allowance(msg.sender, self)
+    assert allowed >= _margin
+    success: bool = extcall ERC20(margin_token_address).transferFrom(msg.sender, self, _margin)
+    assert success
+
+    limit_order: LimitOrder = LimitOrder(
+        trader_address = msg.sender,
+        leverage = _leverage,
+        margin = _margin,
+        price = _price,
+        quantity = _quantity,
+        direction = _direction,
+        is_open = True,
+        timestamp = block.timestamp
+    )
+
+    self.limit_orders[msg.sender] = limit_order
+
+@external
+@nonreentrant
+def close_limit_order():
+    assert self.limit_orders[msg.sender].is_open, "no limit orders open"
+
+    margin_to_send_back: uint256 = self.limit_orders[msg.sender].margin
+
+    self.limit_orders[msg.sender].leverage = 0
+    self.limit_orders[msg.sender].margin = 0
+    self.limit_orders[msg.sender].price = 0
+    self.limit_orders[msg.sender].quantity = 0
+    self.limit_orders[msg.sender].is_open = False
+    self.limit_orders[msg.sender].timestamp = 0
+
+    success: bool = extcall ERC20(margin_token_address).transfer(msg.sender, margin_to_send_back)
+    assert success, "failed to return limit order margin"
+
+@external
+@nonreentrant
+def fill_limit_order(_address: address, _quantity_to_fill: uint256):
+    assert msg.sender == authorized_matching_engine
+    assert self.limit_orders[_address].is_open, "no limit order open for provided address"
+
+    current_position: LimitOrder = self.limit_orders[_address]
+
+    if _quantity_to_fill < current_position.quantity:
+        remaining_quantity: uint256 = current_position.quantity - _quantity_to_fill
+        quantity_based_size_of_limit: uint256 = current_position.price * current_position.quantity
+        quantity_based_size_of_market: uint256 = current_position.price * _quantity_to_fill
+        remaining_margin: uint256 = (quantity_based_size_of_limit - quantity_based_size_of_market) // current_position.leverage
+        margin_filled: uint256 = (_quantity_to_fill * current_position.price) // current_position.leverage
+
+        self.limit_orders[_address].quantity = remaining_quantity
+        self.limit_orders[_address].margin = remaining_margin
+        self._integrate_funding()
+        
+        position: Position = Position(
+            margin = margin_filled,
+            leverage = current_position.leverage,
+            entry_price = current_position.price,
+            size = margin_filled * current_position.leverage,
+            funding_index_snapshot = self.funding_index,
+            direction = current_position.direction,
+            is_open = True
+        )
+
+        assert not self.positions[_address].is_open, "maker already has an open position"
+        self.positions[_address] = position
+
+    else:
+        assert _quantity_to_fill <= current_position.quantity, "overfilling"
+
+        self._integrate_funding()
+
+        position: Position = Position(
+            margin = current_position.margin,
+            leverage = current_position.leverage,
+            entry_price = current_position.price,
+            size = current_position.margin * current_position.leverage,
+            funding_index_snapshot = self.funding_index,
+            direction = current_position.direction,
+            is_open = True
+        )
+
+        assert not self.positions[_address].is_open, "maker already has an open position"
+        self.positions[_address] = position
+
+        self.limit_orders[_address].leverage = 0
+        self.limit_orders[_address].margin = 0
+        self.limit_orders[_address].price = 0
+        self.limit_orders[_address].quantity = 0
+        self.limit_orders[_address].is_open = False
+        self.limit_orders[_address].timestamp = 0
 
 @external
 @nonreentrant
@@ -246,5 +359,3 @@ def update_funding(_new_rate_per_second: int256):
     assert msg.sender == authorized_funding_updater, "Only authorized funding updater can update funding"
     self._integrate_funding()
     self.funding_rate_per_second = _new_rate_per_second
-
-    

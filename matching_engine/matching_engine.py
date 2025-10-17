@@ -77,12 +77,10 @@ class OrderBook:
         return self.trade_id
     
     def get_best_bid(self) -> float:
-        nearest_bid = max(self.bids)
-        return nearest_bid
+        return max(self.bids) if self.bids else None
     
     def get_best_ask(self) -> float:
-        nearest_ask = min(self.asks)
-        return nearest_ask
+        return min(self.asks) if self.asks else None
     
     def snapshot(self) -> dict:
         book_snapshot = {} 
@@ -226,6 +224,7 @@ class OrderBook:
                     order_list.remove(order)
                 if not order_list:
                     del book[price_level]
+        return self.trade_events[-1]
 
 # market = OrderBook("BTC")
 

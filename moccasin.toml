@@ -2,6 +2,12 @@
 src = "src"
 out = "out"
 dot_env = ".env"
+name = "moccasin_project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["web3"]
 
 [networks.pyevm]
 is_zksync = false

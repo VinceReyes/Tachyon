@@ -20,6 +20,10 @@ def get_yes_token_id() -> str:
     url = f"{POLYMARKET_BASE_API}{URL_SUFFIX}"
 
     r = requests.get(url)
+
+    if r.status_code != 200:
+        raise ConnectionError("Could not connect to provided url")
+
     response = r.json()
 
     markets = response['markets'][0]
@@ -34,10 +38,13 @@ def get_yes_token_price(_token_id: str) -> float:
     r = requests.get(url, params=query)
     response = r.json()
     price = int((response['mid']) * PRICE_SCALE)
+    
     return price
 
 def init_web3() -> Web3:
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
+    if not w3.is_connected():
+        raise ValueError("Could not connect to specified RPC URL")
     account = w3.eth.account.from_key(PRIVATE_KEY)
     w3.eth.default_account = account.address
     return w3
@@ -76,6 +83,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
