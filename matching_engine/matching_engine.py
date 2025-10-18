@@ -2,6 +2,17 @@ from dataclasses import dataclass
 from enum import Enum
 from sortedcontainers import SortedDict
 import time
+from web3 import Web3
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
+RPC_URL = os.environ.get('RPC_URL')
+PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
+PERPS_ABI = os.environ.get("PERPS_ABI")
+PRICE_SCALE = 10**6
 
 class Side(Enum):
     BUY = "buy"
@@ -53,6 +64,81 @@ class OrderBook:
         self.trade_events = []
         self.MAKER_FEE: float = 0.0002
         self.TAKER_FEE: float = 0.0006
+        self.w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        if not self.w3.is_connected():
+            raise ValueError("Could not connect to specified RPC URL")
+        account = self.w3.eth.account.from_key(PRIVATE_KEY)
+        self.w3.eth.default_account = account.address
+
+    def send_limit_order(w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        margin = int(_margin * PRICE_SCALE)
+        price = int(_price * PRICE_SCALE)
+        quantity = int(_quantity * PRICE_SCALE)
+        direction: bool = True if _direction == Side.BUY else False
+
+        tx = contract.functions.add_limit_order(
+            _leverage,
+            margin,
+            price,
+            quantity,
+            direction
+        ).build_transaction({
+            "from": trader_address,
+            "nonce": w3.eth.get_transaction_count(trader_address),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        })
+
+        return tx
+    
+    def send_limit_order_removal(w3: Web3, trader_address: str):
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        tx = contract.functions.close_limit_order().build_transaction({
+            "from": trader_address,
+            "nonce": w3.eth.get_transaction_count(trader_address),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        })
+
+        return tx
+    
+    def call_fill_limit_order(w3: Web3, _address: str, _quantity_to_fill: int):
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+        account = w3.eth.account.from_key(PRIVATE_KEY)
+
+        quantity_to_fill = _quantity_to_fill * PRICE_SCALE
+
+        tx_params = {
+            "from": account,
+            "nonce": w3.eth.get_transaction_count(account),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        }
+
+        tx = contract.functions.fill_limit_order(_address, quantity_to_fill).build_transaction(tx_params)
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+        return receipt
+    
+    def send_market_order(w3: Web3, _margin: float, _leverage: int, _direction: Side, trader_address: str):
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        margin = int(_margin * PRICE_SCALE)
+        direction: bool = True if _direction == Side.BUY else False
+
+        tx = contract.functions.open_position(margin, _leverage, direction).build_transaction({
+            "from": trader_address,
+            "nonce": w3.eth.get_transaction_count(trader_address),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        })
+
+        return tx
 
     def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order):
         trade: Trade = Trade(
@@ -118,6 +204,8 @@ class OrderBook:
 
         book = self.bids if order.side == Side.BUY else self.asks
 
+        self.send_limit_order(self.w3, order.leverage, order.margin, order.price, order.quantity, order.side, order.trader_id)
+
         if order.price not in book:
             order_list = [order]
             book[order.price] = order_list
@@ -140,6 +228,8 @@ class OrderBook:
 
         if not order_list:
             del book[_price]
+
+        self.send_limit_order_removal(self.w3, _trader_id)
     
     def market_order(
             self,
@@ -188,15 +278,25 @@ class OrderBook:
                         self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
+
+                        self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
                     else:
                         resting_filled_quantity = current_quantity
                         self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
-                        current_order.quantity = current_order.quantity - current_quantity
-                        current_order.status = Status.PARTIALLY_FILLED
+
+                        # right now for mvp, we are refunsing margin that doesn't get filled and closing out the ramining limit
+                        # current_order.quantity = current_order.quantity - current_quantity
+                        # current_order.status = Status.PARTIALLY_FILLED
+
                         current_quantity = 0
 
+                        self.call_fill_limit_order(self.w3, current_order.trader_id, resting_filled_quantity)
+
+                        # used for mvp refund system
+                        order_removal_list.append(resting_order)
+
                     if current_quantity == 0:
-                        return
+                        break
                 for order in order_removal_list:
                     order_list.remove(order)
                 if not order_list:
@@ -211,12 +311,22 @@ class OrderBook:
                         self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
+
+                        self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
                     else:
                         resting_filled_quantity = current_quantity
                         self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
-                        current_order.quantity = current_order.quantity - current_quantity
-                        current_order.status = Status.PARTIALLY_FILLED
+
+                        # right now for mvp, we are refunsing margin that doesn't get filled and closing out the ramining limit
+                        # current_order.quantity = current_order.quantity - current_quantity
+                        # current_order.status = Status.PARTIALLY_FILLED
+
                         current_quantity = 0
+
+                        self.call_fill_limit_order(self.w3, current_order.trader_id, resting_filled_quantity)
+
+                        # used for mvp refund system
+                        order_removal_list.append(resting_order)
 
                     if current_quantity == 0:
                         break

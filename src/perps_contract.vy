@@ -137,7 +137,7 @@ def _calculate_health_factor(_address: address) -> int256:
 @nonreentrant
 def add_limit_order(_leverage: uint256, _margin: uint256, _price: uint256, _quantity: uint256, _direction: bool):
     assert _leverage > 0, "leverage cannot be <= 0"
-    assert _margin > 0, "margin must be <= 0"
+    assert _margin > 0, "margin must be > 0"
     assert _price > 0, "price cannot be <= 0"
     assert not self.positions[msg.sender].is_open, "cannot open limit with existing open position"
     assert not self.limit_orders[msg.sender].is_open, "already have a limit order placed"
@@ -192,9 +192,10 @@ def fill_limit_order(_address: address, _quantity_to_fill: uint256):
         remaining_margin: uint256 = (quantity_based_size_of_limit - quantity_based_size_of_market) // current_position.leverage
         margin_filled: uint256 = (_quantity_to_fill * current_position.price) // current_position.leverage
 
-        self.limit_orders[_address].quantity = remaining_quantity
-        self.limit_orders[_address].margin = remaining_margin
-        self._integrate_funding()
+        # for mvp purposes, right now we are simply refunding leftover margin to the user, but this code can be used in the future for multi position handling and a more robust system
+        # self.limit_orders[_address].quantity = remaining_quantity
+        # self.limit_orders[_address].margin = remaining_margin
+        # self._integrate_funding()
         
         position: Position = Position(
             margin = margin_filled,
@@ -208,6 +209,18 @@ def fill_limit_order(_address: address, _quantity_to_fill: uint256):
 
         assert not self.positions[_address].is_open, "maker already has an open position"
         self.positions[_address] = position
+
+
+        # used for mvp refund system
+        success: bool = extcall ERC20(margin_token_address).transfer(_address, remaining_margin)
+        assert success, "failed to return remaining margin"
+
+        self.limit_orders[_address].leverage = 0
+        self.limit_orders[_address].margin = 0
+        self.limit_orders[_address].price = 0
+        self.limit_orders[_address].quantity = 0
+        self.limit_orders[_address].is_open = False
+        self.limit_orders[_address].timestamp = 0
 
     else:
         assert _quantity_to_fill <= current_position.quantity, "overfilling"
