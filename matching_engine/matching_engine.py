@@ -140,7 +140,7 @@ class OrderBook:
 
         return tx
 
-    def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order):
+    def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order) -> Trade:
         trade: Trade = Trade(
             timestamp = time.time(),
             trade_id = self.increment_trade_id(),
@@ -153,6 +153,7 @@ class OrderBook:
             maker_fee = (order.margin * order.leverage) * self.MAKER_FEE
         )
         self.trade_events.append(trade)
+        return trade
 
     def increment_order_id(self) -> int:
         self.order_id += 1
@@ -262,6 +263,7 @@ class OrderBook:
         )
 
         book = self.asks if order.side == Side.BUY else self.bids
+        fills = []
 
         if not book:
             raise ValueError("No book depth to execute market order")
@@ -275,14 +277,14 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
-                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
+                        fills.append(self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order))
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
                     else:
                         resting_filled_quantity = current_quantity
-                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
+                        fills.append(self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order))
 
                         # right now for mvp, we are refunsing margin that doesn't get filled and closing out the ramining limit
                         # current_order.quantity = current_order.quantity - current_quantity
@@ -308,14 +310,14 @@ class OrderBook:
                 for resting_order in order_list:
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
-                        self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order)
+                        fills.append(self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order))
                         current_quantity = current_quantity - current_order.quantity
                         order_removal_list.append(resting_order)
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
                     else:
                         resting_filled_quantity = current_quantity
-                        self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order)
+                        fills.append(self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order))
 
                         # right now for mvp, we are refunsing margin that doesn't get filled and closing out the ramining limit
                         # current_order.quantity = current_order.quantity - current_quantity
@@ -334,7 +336,12 @@ class OrderBook:
                     order_list.remove(order)
                 if not order_list:
                     del book[price_level]
-        return self.trade_events[-1]
+        avg_price = sum(trade.price * trade.quantity for trade in fills) / sum(trade.quantity for trade in fills)
+        total_quantity = sum(trade.quantity for trade in fills)
+        # use the import for the positon manager to create the trade for the taker at the end with the avgs
+
+        # this technically only returns the last trade event appended to the trade_events list which in some instances of multiple fills, isn't the full log of trades emmitted
+        #return self.trade_events[-1]
 
 # market = OrderBook("BTC")
 
