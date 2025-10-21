@@ -11,6 +11,8 @@ PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
 RPC_URL = os.environ.get('RPC_URL')
 ORACLE_ADDRESS = os.environ.get('ORACLE_ADDRESS')
 ORACLE_ABI = os.environ.get("ORACLE_ABI")
+PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
+PERPS_ABI = os.environ.get('PERPS_ABI')
 PRICE_SCALE = 10**6
 
 class Side(Enum):
@@ -46,8 +48,8 @@ class Position:
     realized_pnl: float
     funding_paid: float
     status: Status
-    open_timestamp: int
-    close_timestamp: int
+    open_timestamp: float
+    close_timestamp: float
 
 @dataclass
 class Order:
@@ -105,13 +107,13 @@ class PositionManager:
             )
             print(f"Account created for {_address}")
     
-    def create_taker_positions(self, _taker_id: str, _asset_name: str, _side: Side, _entry_price: float, _quantity: float, _leverage: int, _margin: float):
+    def create_position(self, _trader_id: str, _asset_name: str, _side: Side, _entry_price: float, _quantity: float, _leverage: int, _margin: float):
 
-        if _taker_id not in self.accounts:
+        if _trader_id not in self.accounts:
             raise ValueError("taker is not a registered user")
         
         taker_position: Position = Position(
-            account_id = _taker_id,
+            account_id = _trader_id,
             position_id = self.increment_position_id(),
             market_id = _asset_name,
             side = _side,
@@ -128,8 +130,95 @@ class PositionManager:
             close_timestamp = 0
         )
 
-        self.accounts[_taker_id].positions.append(taker_position)
-        print(f"Position created for {_taker_id}: {taker_position.market_id}, {_side}, qty={_quantity}, avg_price={_entry_price}")
+        self.accounts[_trader_id].positions.append(taker_position)
+        print(f"Position created for {_trader_id}: {taker_position.market_id}, {_side}, qty={_quantity}, avg_price={_entry_price}")
+
+    def update_pnl(self, _position: Position):
+        if _position.status != Status.OPEN:
+            raise ValueError("position is not open")
+        current_price: float = self.get_price()
+
+        if _position.side == Side.BUY:
+            price_differential = current_price - _position.entry_price
+        else:
+            price_differential = _position.entry_price - current_price
+
+        price_change_percentage = price_differential / _position.entry_price
+
+        notional = _position.leverage * _position.margin
+        pnl = notional * price_change_percentage
+
+        _position.unrealized_pnl = pnl
+        return pnl
     
-    def create_maker_position(self):
-        pass
+    def close_position(self, _trader_id: str, _market_id: str, _quantity: float, _close_price: float):
+        if _trader_id not in self.accounts:
+            raise ValueError("trader not found")
+        
+        account: Account = self.accounts[_trader_id]
+
+        position: Position = next((p for p in account.positions if p.market_id == _market_id and p.status == Status.OPEN), None)
+
+        if not position:
+            raise ValueError("no open position")
+        
+        if position.side == Side.BUY:
+            pnl = (_close_price - position.entry_price) * position.margin * position.leverage
+        else:
+            pnl = (position.entry_price - _close_price) * position.margin * position.leverage
+
+        position.realized_pnl += pnl
+
+        if _quantity < position.quantity:
+            position.quantity -= _quantity
+        elif _quantity == position.quantity:
+            position.quantity = 0
+            position.close_timestamp = time.time()
+            position.status = Status.CLOSED
+        else:
+            raise ValueError("quantity exceeds open position quantity")
+        
+        return pnl
+    
+    def liquidate_position(self, _address: str) -> bool:
+        contract = self.w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        try:
+            account = self.w3.eth.account.from_key(PRIVATE_KEY)
+
+            tx = contract.functions.liquidate(_address).build_transaction({
+                "from": account,
+                "nonce": self.w3.eth.get_transaction_count(account),
+                "gas": 300000,
+                "gasPrice": self.w3.to_wei(1, "gwei")
+            })
+
+            signed_tx = self.w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+
+            if _address in self.accounts:
+                for p in self.accounts[_address].positions:
+                    if p.status == Status.OPEN:
+                        p.status = Status.LIQUIDATED
+                        p.close_timestamp = time.time()
+                        print(f"Position {p.position_id} liquidated at {p.close_timestamp}")
+
+            return receipt.status == 1
+
+        except Exception as e:
+            print(f"Liquidation failed for {_address}: {e}")
+            return False
+        
+    def management_loop(self):
+        while True:
+            for account in self.accounts.values():
+                for position in account.positions:
+                    if position.status == Status.OPEN:
+                        try:
+                            self.update_pnl(position)
+                            if position.unrealized_pnl / position.margin < -0.8:
+                                self.liquidate_position(position.account_id)
+                        except Exception as e:
+                            print(f"Error processing {position.account_id}: {e}")
+            time.sleep(5)

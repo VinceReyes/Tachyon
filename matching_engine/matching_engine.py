@@ -5,6 +5,7 @@ import time
 from web3 import Web3
 from dotenv import load_dotenv
 import os
+from position_manager import PositionManager
 
 load_dotenv()
 
@@ -30,7 +31,7 @@ class Status(Enum):
 
 @dataclass
 class Trade:
-    timestamp: int
+    timestamp: float
     trade_id: int
     price: float
     quantity: float
@@ -50,12 +51,12 @@ class Order:
     filled_quantity: float
     leverage: int
     margin: float
-    timestamp: int
+    timestamp: float
     order_type: OrderType
     status: Status
 
 class OrderBook:
-    def __init__(self, _asset_name):
+    def __init__(self, _asset_name, _pm):
         self.asset_name: str = _asset_name
         self.order_id: int = 0
         self.trade_id: int = 0
@@ -69,6 +70,7 @@ class OrderBook:
             raise ValueError("Could not connect to specified RPC URL")
         account = self.w3.eth.account.from_key(PRIVATE_KEY)
         self.w3.eth.default_account = account.address
+        self.pm = _pm
 
     def send_limit_order(w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
@@ -282,6 +284,13 @@ class OrderBook:
                         order_removal_list.append(resting_order)
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
+
+                        has_position = self.find_open_positions(current_order.trader_id, current_order.side)
+
+                        if has_position:
+                            self.pm.close_position(current_order.trader_id, self.asset_name, current_order.quantity, current_order.price)
+                        else:
+                            self.pm.create_position(current_order.trader_id, self.asset_name, current_order.side, current_order.price, current_order.quantity, current_order.leverage, current_order.margin)
                     else:
                         resting_filled_quantity = current_quantity
                         fills.append(self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order))
@@ -293,6 +302,13 @@ class OrderBook:
                         current_quantity = 0
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, resting_filled_quantity)
+
+                        has_position = self.find_open_positions(current_order.trader_id, current_order.side)
+
+                        if has_position:
+                            self.pm.close_position(current_order.trader_id, self.asset_name, resting_filled_quantity, current_order.price)
+                        else:
+                            self.pm.create_position(current_order.trader_id, self.asset_name, current_order.side, current_order.price, resting_filled_quantity, current_order.leverage, current_order.margin)
 
                         # used for mvp refund system
                         order_removal_list.append(resting_order)
@@ -315,6 +331,13 @@ class OrderBook:
                         order_removal_list.append(resting_order)
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, current_order.quantity)
+
+                        has_position = self.find_open_positions(current_order.trader_id, current_order.side)
+
+                        if has_position:
+                            self.pm.close_position(current_order.trader_id, self.asset_name, current_order.quantity, current_order.price)
+                        else:
+                            self.pm.create_position(current_order.trader_id, self.asset_name, current_order.side, current_order.price, current_order.quantity, current_order.leverage, current_order.margin)
                     else:
                         resting_filled_quantity = current_quantity
                         fills.append(self.log_trade(current_order, resting_filled_quantity, order.trader_id, current_order.trader_id, order.side, order))
@@ -327,6 +350,13 @@ class OrderBook:
 
                         self.call_fill_limit_order(self.w3, current_order.trader_id, resting_filled_quantity)
 
+                        has_position = self.find_open_positions(current_order.trader_id, current_order.side)
+
+                        if has_position:
+                            self.pm.close_position(current_order.trader_id, self.asset_name, resting_filled_quantity, current_order.price)
+                        else:
+                            self.pm.create_position(current_order.trader_id, self.asset_name, current_order.side, current_order.price, resting_filled_quantity, current_order.leverage, current_order.margin)
+
                         # used for mvp refund system
                         order_removal_list.append(resting_order)
 
@@ -338,10 +368,19 @@ class OrderBook:
                     del book[price_level]
         avg_price = sum(trade.price * trade.quantity for trade in fills) / sum(trade.quantity for trade in fills)
         total_quantity = sum(trade.quantity for trade in fills)
-        # use the import for the positon manager to create the trade for the taker at the end with the avgs
 
-        # this technically only returns the last trade event appended to the trade_events list which in some instances of multiple fills, isn't the full log of trades emmitted
-        #return self.trade_events[-1]
+        has_opposite_position: bool = self.find_open_positions(order.trader_id, order.side)
+
+        if has_opposite_position:
+            self.pm.close_position(order.trader_id, self.asset_name, total_quantity, avg_price)
+        else:
+            self.pm.create_position(order.trader_id, self.asset_name, order.side, avg_price, total_quantity, order.leverage, order.margin)
+    
+    def find_open_positions(self, _address: str, _order_side: Side) -> bool:
+        for p in self.pm.accounts[_address].positions:
+            if p.status == Status.OPEN and p.market_id == self.asset_name and _order_side != p.side:
+                return True
+        return False
 
 # market = OrderBook("BTC")
 
