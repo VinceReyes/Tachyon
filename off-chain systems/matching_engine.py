@@ -70,7 +70,7 @@ class OrderBook:
             raise ValueError("Could not connect to specified RPC URL")
         account = self.w3.eth.account.from_key(PRIVATE_KEY)
         self.w3.eth.default_account = account.address
-        self.pm = _pm
+        self.pm: PositionManager = _pm
 
     def send_limit_order(w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
