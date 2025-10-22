@@ -29,14 +29,14 @@ limit_orders: public(HashMap[address, LimitOrder])
 # ------------------------------------------------------------------
 #                            IMMUTABLES
 # ------------------------------------------------------------------
-authorized_vault_address: immutable(address)
-authorized_matching_engine: immutable(address)
-market_id: immutable(uint256)
-market_name: immutable(String[64])
-authorized_funding_updater: immutable(address)
-margin_token_address: immutable(address)
-oracle_address: immutable(address)
-OWNER: immutable(address)
+authorized_vault_address: public(immutable(address))
+authorized_matching_engine: public(immutable(address))
+market_id: public(immutable(uint256))
+market_name: public(immutable(String[64]))
+authorized_funding_updater: public(immutable(address))
+margin_token_address: public(immutable(address))
+oracle_address: public(immutable(address))
+OWNER: public(immutable(address))
 
 # ------------------------------------------------------------------
 #                            CONSTANTS

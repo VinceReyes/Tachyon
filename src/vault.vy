@@ -26,8 +26,8 @@ authorized_perp_address: public(address)
 # ------------------------------------------------------------------
 #                     CONSTANTS AND IMMUTABLES
 # ------------------------------------------------------------------
-OWNER: immutable(address)
-USDC_ADDRESS: immutable(address)
+OWNER: public(immutable(address))
+USDC_ADDRESS: public(immutable(address))
 
 # deploying the contract will require the owner to deposit some USDC(not PYUSD) to the contract for initial liquidity
 @deploy

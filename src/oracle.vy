@@ -10,7 +10,7 @@ last_update_time: public(uint256)
 # ------------------------------------------------------------------
 #                            IMMUTABLES
 # ------------------------------------------------------------------
-authorized_oracle_updater: immutable(address)
+authorized_oracle_updater: public(immutable(address))
 
 # ------------------------------------------------------------------
 #                            CONSTANTS
