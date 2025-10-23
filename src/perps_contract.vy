@@ -117,6 +117,8 @@ def _calculate_health_factor(_address: address) -> int256:
     pos: Position = self.positions[_address]
 
     entry_price: uint256 = pos.entry_price
+    #TODO
+    # right now liquidations are determined by the oracle price, but eventially need to be refactored to get a mark price from the off chain matching engine that is a smoothed midpoint price to reference
     mark_price: uint256 = self._get_market_price()
     margin: uint256 = pos.margin
     leverage: uint256 = pos.leverage
@@ -278,14 +280,15 @@ def open_position(_margin: uint256, _leverage: uint256, _direction: bool, _price
 
 @external
 @nonreentrant
-def close_position(_price: uint256):
-    assert self.positions[msg.sender].is_open, "No open position for user"
+def close_position(_address: address, _price: uint256):
+    assert msg.sender == authorized_matching_engine
+    assert self.positions[_address].is_open, "No open position for user"
 
     self._integrate_funding()
 
-    current_position: Position = self.positions[msg.sender]
+    current_position: Position = self.positions[_address]
     current_price: uint256 = _price
-    funding_impact: int256 = self._get_funding_impact(self.positions[msg.sender])
+    funding_impact: int256 = self._get_funding_impact(self.positions[_address])
     assert current_position.entry_price > 0, "Bad entry price"
     price_differential: int256 = convert(current_price, int256) - convert(current_position.entry_price, int256)
     pnl: int256 = 0
@@ -319,28 +322,28 @@ def close_position(_price: uint256):
         success_send_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, current_position.margin)
         assert success_send_vault, "Failed to send margin from full loss back to vault upon close"
 
-        current_position.margin = 0
-        current_position.is_open = False
-        current_position.size = 0
-        current_position.entry_price = 0
+        self.positions[_address].margin = 0
+        self.positions[_address].is_open = False
+        self.positions[_address].size = 0
+        self.positions[_address].entry_price = 0
         return
 
     if profit > 0:
-        success_profit: bool = extcall VAULT(authorized_vault_address).payout(msg.sender, profit)
+        success_profit: bool = extcall VAULT(authorized_vault_address).payout(_address, profit)
         assert success_profit, "Could not payout profit"
     
     if remaining_margin > 0:
-        success_margin: bool = extcall ERC20(margin_token_address).transfer(msg.sender, remaining_margin)
+        success_margin: bool = extcall ERC20(margin_token_address).transfer(_address, remaining_margin)
         assert success_margin, "Could not payout margin"
     
     if to_vault_margin > 0:
         success_to_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, to_vault_margin)
         assert success_to_vault, "Could not send trader's lost margin to vault"
 
-    current_position.margin = 0
-    current_position.is_open = False
-    current_position.size = 0
-    current_position.entry_price = 0
+    self.positions[_address].margin = 0
+    self.positions[_address].is_open = False
+    self.positions[_address].size = 0
+    self.positions[_address].entry_price = 0
 
 @external
 @nonreentrant

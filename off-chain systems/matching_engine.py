@@ -77,7 +77,7 @@ class OrderBook:
 
         margin = int(_margin * PRICE_SCALE)
         price = int(_price * PRICE_SCALE)
-        quantity = int(_quantity * PRICE_SCALE)
+        quantity = int(_quantity)
         direction: bool = True if _direction == Side.BUY else False
 
         tx = contract.functions.add_limit_order(
@@ -146,16 +146,22 @@ class OrderBook:
     def send_close_position(w3: Web3, trader_address: str, _price: float):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
+        sender = w3.eth.account.from_key(PRIVATE_KEY)
+
         price: int = int(_price * PRICE_SCALE)
 
-        tx = contract.functions.close_position(price).build_transaction({
-            "from": trader_address,
-            "nonce": w3.eth.get_transaction_count(trader_address),
+        tx = contract.functions.close_position(trader_address, price).build_transaction({
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender),
             "gas": 300000,
             "gasPrice": w3.to_wei(1, "gwei")
         })
 
-        return tx
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+        return receipt
 
     def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order) -> Trade:
         trade: Trade = Trade(
