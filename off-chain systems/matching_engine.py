@@ -109,13 +109,13 @@ class OrderBook:
     
     def call_fill_limit_order(w3: Web3, _address: str, _quantity_to_fill: int):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
-        account = w3.eth.account.from_key(PRIVATE_KEY)
+        sender = w3.eth.account.from_key(PRIVATE_KEY)
 
-        quantity_to_fill = _quantity_to_fill * PRICE_SCALE
+        quantity_to_fill = _quantity_to_fill
 
         tx_params = {
-            "from": account,
-            "nonce": w3.eth.get_transaction_count(account),
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender),
             "gas": 300000,
             "gasPrice": w3.to_wei(1, "gwei")
         }
@@ -127,13 +127,28 @@ class OrderBook:
 
         return receipt
     
-    def send_market_order(w3: Web3, _margin: float, _leverage: int, _direction: Side, trader_address: str):
+    def send_open_position(w3: Web3, _margin: float, _leverage: int, _direction: Side, trader_address: str, _price: float):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
         margin = int(_margin * PRICE_SCALE)
         direction: bool = True if _direction == Side.BUY else False
+        price: int = int(_price * PRICE_SCALE)
 
-        tx = contract.functions.open_position(margin, _leverage, direction).build_transaction({
+        tx = contract.functions.open_position(margin, _leverage, direction, price).build_transaction({
+            "from": trader_address,
+            "nonce": w3.eth.get_transaction_count(trader_address),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        })
+
+        return tx
+    
+    def send_close_position(w3: Web3, trader_address: str, _price: float):
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        price: int = int(_price * PRICE_SCALE)
+
+        tx = contract.functions.close_position(price).build_transaction({
             "from": trader_address,
             "nonce": w3.eth.get_transaction_count(trader_address),
             "gas": 300000,
@@ -372,8 +387,12 @@ class OrderBook:
         has_opposite_position: bool = self.find_open_positions(order.trader_id, order.side)
 
         if has_opposite_position:
+            self.send_close_position(self.w3, order.trader_id, avg_price)
+
             self.pm.close_position(order.trader_id, self.asset_name, total_quantity, avg_price)
         else:
+            self.send_open_position(self.w3, order.margin, order.leverage, order.side, order.trader_id, avg_price)
+
             self.pm.create_position(order.trader_id, self.asset_name, order.side, avg_price, total_quantity, order.leverage, order.margin)
     
     def find_open_positions(self, _address: str, _order_side: Side) -> bool:

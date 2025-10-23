@@ -93,9 +93,9 @@ def remove_liquidity(amount: uint256):
     assert msg.sender != empty(address), "No address provided"
     assert self.user_lp_balances[msg.sender] >= amount, "Insufficient balance to remove" 
 
+    withdraw_amount: uint256 = amount * self.total_usd_balance // self.lp_token_total_supply
     self._burn(msg.sender, amount)
     assert self.lp_token_total_supply > 0, "Total supply is 0"
-    withdraw_amount: uint256 = amount * self.total_usd_balance // self.lp_token_total_supply
     self.total_usd_balance -= withdraw_amount
 
     success: bool = extcall ERC20(USDC_ADDRESS).transfer(msg.sender, withdraw_amount)

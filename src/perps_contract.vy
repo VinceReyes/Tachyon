@@ -249,12 +249,12 @@ def fill_limit_order(_address: address, _quantity_to_fill: uint256):
 
 @external
 @nonreentrant
-def open_position(_margin: uint256, _leverage: uint256, _direction: bool):
+def open_position(_margin: uint256, _leverage: uint256, _direction: bool, _price: uint256):
     assert not self.positions[msg.sender].is_open, "Already opened postion"
     assert _margin > 0
     assert _leverage > 0
 
-    _entry_price: uint256 = self._get_market_price()
+    _entry_price: uint256 = _price
     assert _entry_price > 0, "Bad entry price"
 
     allowed: uint256 = staticcall ERC20(margin_token_address).allowance(msg.sender, self)
@@ -278,13 +278,13 @@ def open_position(_margin: uint256, _leverage: uint256, _direction: bool):
 
 @external
 @nonreentrant
-def close_position():
+def close_position(_price: uint256):
     assert self.positions[msg.sender].is_open, "No open position for user"
 
     self._integrate_funding()
 
     current_position: Position = self.positions[msg.sender]
-    current_price: uint256 = self._get_market_price()
+    current_price: uint256 = _price
     funding_impact: int256 = self._get_funding_impact(self.positions[msg.sender])
     assert current_position.entry_price > 0, "Bad entry price"
     price_differential: int256 = convert(current_price, int256) - convert(current_position.entry_price, int256)
