@@ -13,7 +13,6 @@ def owner():
 @pytest.fixture
 def deploy_test_system(owner):
     usdc_c = deploy_token()
-    usdc_c.mint(owner, 1_000_000 * 10**6)
     
     with boa.env.prank(owner):
         vault_c, oracle_c, perps_contract_c = deploy(usdc_c.address, owner)

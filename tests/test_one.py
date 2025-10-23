@@ -368,3 +368,37 @@ def test_can_close_position_in_loss(deploy_test_system, test_user):
     assert not perps.positions(test_user).is_open
     assert perps.positions(test_user).size == 0
     assert perps.positions(test_user).entry_price == 0
+
+def test_can_liquidate_position(deploy_test_system, test_user, test_user_two):
+    vault = deploy_test_system["vault"]
+    usdc = deploy_test_system["usdc"]
+    owner = deploy_test_system["owner"]
+    oracle = deploy_test_system["oracle"]
+    perps = deploy_test_system["perps"]
+
+    SCALE: int = 10**6
+    price: int = int(0.25 * SCALE)
+    oracle_price: int = int(0.1375 * SCALE)
+
+    with boa.env.prank(owner):
+        usdc.mint(owner, 10000 * SCALE)
+        usdc.approve(vault, 10000 * SCALE)
+        vault.add_liquidity(10000 * SCALE)
+        vault.authorize_perp_address(perps.address)
+
+    with boa.env.prank(test_user):
+        usdc.mint(test_user, 2000 * SCALE)
+        usdc.approve(perps, 500 * SCALE)
+        perps.open_position(500 * SCALE, 2, True, price)
+
+    with boa.env.prank(owner):
+        oracle.update_oracle(oracle_price)
+
+    with boa.env.prank(test_user_two):
+        perps.liquidate(test_user)
+
+    assert usdc.balanceOf(vault.address) == 10475 * SCALE
+    assert usdc.balanceOf(test_user_two) == 25 * SCALE
+    assert usdc.balanceOf(owner) == 0
+    assert vault.total_usd_balance() == 10475 * SCALE
+    assert usdc.balanceOf(perps.address) == 0

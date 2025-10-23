@@ -121,3 +121,12 @@ def authorize_perp_address(_address: address):
     assert msg.sender == OWNER, "Only owner can authorize perp address"
     assert _address != empty(address), "No address provided"
     self.authorized_perp_address = _address
+
+@external
+@nonreentrant
+def receive_margin(_amount: uint256) -> bool:
+    assert msg.sender == self.authorized_perp_address, "Only authorized perp address can call this function"
+    assert _amount > 0, "Amount needs to be greater than 0"
+    self.total_usd_balance += _amount
+
+    return True

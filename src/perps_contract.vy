@@ -13,6 +13,7 @@ interface ERC20:
 
 interface VAULT:
     def payout(_to: address, _amount: uint256) -> bool: nonpayable
+    def receive_margin(_amount: uint256) -> bool: nonpayable
 
 interface ORACLE:
     def get_oracle_price() -> uint256: view
@@ -322,6 +323,9 @@ def close_position(_address: address, _price: uint256):
         success_send_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, current_position.margin)
         assert success_send_vault, "Failed to send margin from full loss back to vault upon close"
 
+        vault_received: bool = extcall VAULT(authorized_vault_address).receive_margin(current_position.margin)
+        assert vault_received, "Could not update vault USDC tracker"
+
         self.positions[_address].margin = 0
         self.positions[_address].is_open = False
         self.positions[_address].size = 0
@@ -339,6 +343,9 @@ def close_position(_address: address, _price: uint256):
     if to_vault_margin > 0:
         success_to_vault: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, to_vault_margin)
         assert success_to_vault, "Could not send trader's lost margin to vault"
+
+        vault_received: bool = extcall VAULT(authorized_vault_address).receive_margin(to_vault_margin)
+        assert vault_received, "Could not update vault USDC tracker"
 
     self.positions[_address].margin = 0
     self.positions[_address].is_open = False
@@ -366,6 +373,9 @@ def liquidate(_address: address):
 
         vault_success: bool = extcall ERC20(margin_token_address).transfer(authorized_vault_address, user_margin)
         assert vault_success, "Failed to transfer remaining margin to vault"
+
+        vault_received: bool = extcall VAULT(authorized_vault_address).receive_margin(user_margin)
+        assert vault_received, "Failed to update USDC tracker in vault"
 
         success: bool = extcall VAULT(authorized_vault_address).payout(msg.sender, reward)
         assert success, "Failed to payout reward"
