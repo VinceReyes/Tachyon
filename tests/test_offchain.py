@@ -3,10 +3,15 @@
 import pytest
 from unittest.mock import Mock
 from types import SimpleNamespace
+from fastapi.testclient import TestClient
 
-# import AFTER defining WEB3_IMPORT_PATH to avoid circular import issues
-WEB3_IMPORT_PATH = "off_chain_systems.matching_engine.Web3"
+# import AFTER defining WEB3_IMPORT_PATHS to avoid circular import issues
+WEB3_IMPORT_PATHS = (
+    "off_chain_systems.matching_engine.Web3",
+    "off_chain_systems.position_manager.Web3",
+)
 from off_chain_systems.matching_engine import OrderBook, Side, Status, OrderType
+from off_chain_systems.position_manager import PositionManager, Side as PMSide, Status as PMStatus
 
 
 # ---------------------------------------------------------------------
@@ -23,12 +28,27 @@ def fake_env_and_web3(monkeypatch):
     monkeypatch.setenv("RPC_URL", "http://127.0.0.1:8545")
     monkeypatch.setenv("PERPS_ADDRESS", "0x0000000000000000000000000000000000000000")
     monkeypatch.setenv("PERPS_ABI", "[]")
+    monkeypatch.setenv("ORACLE_ADDRESS", "0x0000000000000000000000000000000000000001")
+    monkeypatch.setenv("ORACLE_ABI", "[]")
 
     # ---------- Fake Web3 implementation ----------
     class FakeEthAccount:
         @staticmethod
         def from_key(key):
             return SimpleNamespace(address="0xFAKEACCOUNT")
+
+    class FakeContractFunction:
+        def __init__(self, value_attr):
+            self._value_attr = value_attr
+
+        def call(self):
+            return getattr(FakeWeb3, self._value_attr)
+
+    class FakeContract:
+        def __init__(self):
+            self.functions = SimpleNamespace(
+                get_oracle_price=lambda: FakeContractFunction("_oracle_price")
+            )
 
     class FakeEth:
         def __init__(self):
@@ -38,7 +58,12 @@ def fake_env_and_web3(monkeypatch):
         def get_transaction_count(self, addr):
             return 0
 
+        def contract(self, address=None, abi=None):
+            return FakeContract()
+
     class FakeWeb3:
+        _oracle_price = 0
+
         class HTTPProvider:
             # stub so Web3(HTTPProvider(...)) doesn't crash
             def __init__(self, url):
@@ -55,8 +80,9 @@ def fake_env_and_web3(monkeypatch):
             return int(amount * 1e9) if unit == "gwei" else int(amount)
 
 
-    # Patch the Web3 class used inside matching_engine
-    monkeypatch.setattr(WEB3_IMPORT_PATH, FakeWeb3)
+    # Patch the Web3 class used inside matching_engine and position_manager
+    for path in WEB3_IMPORT_PATHS:
+        monkeypatch.setattr(path, FakeWeb3)
     yield
 
 
@@ -94,6 +120,63 @@ def register_account(mock_orderbook):
         return mock_orderbook.pm.accounts[address]
 
     return _register
+
+
+@pytest.fixture
+def position_manager():
+    pm = PositionManager()
+    pm.accounts.clear()
+    pm.position_id = 0
+    return pm
+
+
+@pytest.fixture
+def api_client(monkeypatch):
+    from off_chain_systems import server
+
+    def _tx(label: str):
+        return {
+            "to": "0xTxDestination",
+            "from": "0xTxSender",
+            "data": f"{label}_data",
+            "gas": 21000,
+            "gasPrice": 1,
+            "value": 0,
+        }
+
+    fake_engine = Mock()
+    fake_engine.snapshot.return_value = {
+        "bids": [{"price": 0.4, "quantity": 1.0}],
+        "asks": [{"price": 0.5, "quantity": 2.0}],
+    }
+    fake_engine.trade_events = [
+        SimpleNamespace(trade_id=1, price=0.44, quantity=1.5),
+    ]
+    fake_engine.w3 = object()
+    fake_engine.send_limit_order.return_value = _tx("limit")
+    fake_engine.send_market_order.return_value = _tx("market")
+    fake_engine.send_limit_order_removal.return_value = _tx("remove")
+
+    fake_pm = Mock()
+    fake_pm.accounts = {
+        "0xKnown": SimpleNamespace(
+            positions=[
+                SimpleNamespace(
+                    position_id=10,
+                    market_id="BTC",
+                    status=PMStatus.OPEN.value,
+                    quantity=1.25,
+                )
+            ]
+        )
+    }
+    fake_pm.get_price.return_value = 0.42
+
+    monkeypatch.setattr(server, "engine", fake_engine)
+    monkeypatch.setattr(server, "pm", fake_pm)
+
+    client = TestClient(server.app)
+    return client, fake_engine, fake_pm
 
 
 # ---------------------------------------------------------------------
@@ -261,3 +344,195 @@ def test_market_order_rejects_invalid_inputs(mock_orderbook, register_account, k
 
     with pytest.raises(ValueError, match=expected_message):
         ob.market_order("0xTrader", **kwargs)
+
+
+# ---------------------------------------------------------------------
+#  PositionManager tests
+# ---------------------------------------------------------------------
+def test_position_manager_create_account(position_manager):
+    address = "0xAlice"
+    position_manager.create_account(address)
+
+    assert address in position_manager.accounts
+    account = position_manager.accounts[address]
+    assert account.account_id == address
+    assert account.positions == []
+
+
+def test_position_manager_create_position_requires_registered_account(position_manager):
+    with pytest.raises(ValueError, match="registered user"):
+        position_manager.create_position(
+            "0xUnregistered",
+            "BTC",
+            PMSide.BUY,
+            0.4,
+            1.0,
+            2,
+            100,
+        )
+
+
+def test_position_manager_create_position_adds_open_position(position_manager):
+    position_manager.create_account("0xAlice")
+    position_manager.create_position("0xAlice", "BTC", PMSide.BUY, 0.4, 1.5, 3, 250)
+
+    account = position_manager.accounts["0xAlice"]
+    assert len(account.positions) == 1
+    position = account.positions[0]
+    assert position.position_id == 1
+    assert position.market_id == "BTC"
+    assert position.side == PMSide.BUY
+    assert position.quantity == pytest.approx(1.5)
+    assert position.status == PMStatus.OPEN
+
+
+def test_position_manager_update_pnl_buy_side(monkeypatch, position_manager):
+    position_manager.create_account("0xAlice")
+    position_manager.create_position("0xAlice", "BTC", PMSide.BUY, 0.5, 2.0, 2, 150)
+    position = position_manager.accounts["0xAlice"].positions[0]
+
+    # Force oracle to return a higher price
+    monkeypatch.setattr(position_manager, "get_price", lambda: 0.6)
+
+    pnl = position_manager.update_pnl(position)
+    expected = ((0.6 - 0.5) / 0.5) * (2 * 150)
+
+    assert pnl == pytest.approx(expected)
+    assert position.unrealized_pnl == pytest.approx(expected)
+
+
+def test_position_manager_close_position_partial(position_manager):
+    position_manager.create_account("0xAlice")
+    position_manager.create_position("0xAlice", "BTC", PMSide.BUY, 0.5, 3.0, 2, 120)
+    position = position_manager.accounts["0xAlice"].positions[0]
+
+    pnl = position_manager.close_position("0xAlice", "BTC", 1.0, 0.55)
+    expected = (0.55 - 0.5) * position.margin * position.leverage
+
+    assert pnl == pytest.approx(expected)
+    assert position.quantity == pytest.approx(2.0)
+    assert position.status == PMStatus.OPEN
+    assert position.realized_pnl == pytest.approx(expected)
+
+
+def test_position_manager_close_position_full(position_manager):
+    position_manager.create_account("0xBob")
+    position_manager.create_position("0xBob", "ETH", PMSide.BUY, 1.0, 1.0, 3, 200)
+    position = position_manager.accounts["0xBob"].positions[0]
+
+    pnl = position_manager.close_position("0xBob", "ETH", 1.0, 1.1)
+    expected = (1.1 - 1.0) * position.margin * position.leverage
+
+    assert pnl == pytest.approx(expected)
+    assert position.quantity == pytest.approx(0.0)
+    assert position.status == PMStatus.CLOSED
+    assert position.realized_pnl == pytest.approx(expected)
+    assert position.close_timestamp > 0
+
+
+# ---------------------------------------------------------------------
+#  Server API tests
+# ---------------------------------------------------------------------
+def test_server_root(api_client):
+    client, _, _ = api_client
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "message": "Tachyon backend running"}
+
+
+def test_server_orderbook_endpoint(api_client):
+    client, fake_engine, _ = api_client
+
+    response = client.get("/orderbook")
+    assert response.status_code == 200
+    assert response.json() == fake_engine.snapshot.return_value
+    fake_engine.snapshot.assert_called_once()
+
+
+def test_server_positions_endpoint_known(api_client):
+    client, _, fake_pm = api_client
+
+    response = client.get("/positions/0xKnown")
+    assert response.status_code == 200
+    body = response.json()
+    assert "positions" in body
+    assert len(body["positions"]) == 1
+    assert body["positions"][0]["position_id"] == 10
+    fake_pm.accounts["0xKnown"]  # ensure fixture still accessible
+
+
+def test_server_positions_endpoint_unknown(api_client):
+    client, _, _ = api_client
+
+    response = client.get("/positions/0xUnknown")
+    assert response.status_code == 200
+    assert response.json() == {"positions": []}
+
+
+def test_server_oracle_price_endpoint(api_client):
+    client, _, fake_pm = api_client
+
+    response = client.get("/oracle_price")
+    assert response.status_code == 200
+    assert response.json() == {"price": 0.42}
+    fake_pm.get_price.assert_called_once()
+
+
+def test_server_limit_order_endpoint(api_client):
+    client, fake_engine, _ = api_client
+
+    payload = {
+        "direction": "buy",
+        "leverage": 3,
+        "margin": 150.0,
+        "price": 0.45,
+        "quantity": 2.0,
+        "trader_address": "0xTrader",
+    }
+    response = client.post("/tx/limit_order", json=payload)
+    assert response.status_code == 200
+    assert response.json()["data"] == "limit_data"
+    fake_engine.send_limit_order.assert_called_once()
+    args, kwargs = fake_engine.send_limit_order.call_args
+    assert args[0] is fake_engine.w3
+    assert kwargs["_direction"] == Side.BUY
+    assert kwargs["trader_address"] == "0xTrader"
+
+
+def test_server_market_order_endpoint(api_client):
+    client, fake_engine, _ = api_client
+
+    payload = {
+        "direction": "sell",
+        "leverage": 4,
+        "margin": 200.0,
+        "trader_address": "0xTrader",
+    }
+    response = client.post("/tx/market_order", json=payload)
+    assert response.status_code == 200
+    assert response.json()["data"] == "market_data"
+    fake_engine.send_market_order.assert_called_once()
+    args, kwargs = fake_engine.send_market_order.call_args
+    assert kwargs["_direction"] == Side.SELL
+
+
+def test_server_remove_limit_order_endpoint(api_client):
+    client, fake_engine, _ = api_client
+
+    payload = {"trader_address": "0xTrader"}
+    response = client.post("/tx/remove_limit_order", json=payload)
+    assert response.status_code == 200
+    assert response.json()["data"] == "remove_data"
+    fake_engine.send_limit_order_removal.assert_called_once_with(fake_engine.w3, "0xTrader")
+
+
+def test_server_trades_endpoint(api_client):
+    client, fake_engine, _ = api_client
+
+    response = client.get("/trades")
+    assert response.status_code == 200
+    body = response.json()
+    assert "trades" in body
+    assert len(body["trades"]) == len(fake_engine.trade_events)
+    assert body["trades"][0]["trade_id"] == fake_engine.trade_events[0].trade_id
