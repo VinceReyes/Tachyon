@@ -5,7 +5,7 @@ import time
 from web3 import Web3
 from dotenv import load_dotenv
 import os
-from position_manager import PositionManager
+from off_chain_systems.position_manager import PositionManager
 
 load_dotenv()
 
@@ -294,10 +294,11 @@ class OrderBook:
         current_quantity: float = _quantity
         
         if order.side == Side.BUY:
-            for price_level in book:
+            to_delete_levels = []
+            for price_level in list(book.keys()):
                 order_list = book[price_level]
                 order_removal_list = []
-                for resting_order in order_list:
+                for resting_order in list(order_list):
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
                         fills.append(self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order))
@@ -336,15 +337,20 @@ class OrderBook:
 
                     if current_quantity == 0:
                         break
-                for order in order_removal_list:
-                    order_list.remove(order)
+                for removed_order in order_removal_list:
+                    order_list.remove(removed_order)
                 if not order_list:
-                    del book[price_level]
+                    to_delete_levels.append(price_level)
+                if current_quantity == 0:
+                    break
+            for level in to_delete_levels:
+                del book[level]
         else:
-            for price_level in reversed(book.keys()):
+            to_delete_levels = []
+            for price_level in reversed(list(book.keys())):
                 order_list = book[price_level]
                 order_removal_list = []
-                for resting_order in order_list:
+                for resting_order in list(order_list):
                     current_order = resting_order
                     if current_quantity >= current_order.quantity:
                         fills.append(self.log_trade(current_order, current_order.quantity, order.trader_id, current_order.trader_id, order.side, order))
@@ -383,10 +389,14 @@ class OrderBook:
 
                     if current_quantity == 0:
                         break
-                for order in order_removal_list:
-                    order_list.remove(order)
+                for removed_order in order_removal_list:
+                    order_list.remove(removed_order)
                 if not order_list:
-                    del book[price_level]
+                    to_delete_levels.append(price_level)
+                if current_quantity == 0:
+                    break
+            for level in to_delete_levels:
+                del book[level]
         avg_price = sum(trade.price * trade.quantity for trade in fills) / sum(trade.quantity for trade in fills)
         total_quantity = sum(trade.quantity for trade in fills)
 
@@ -402,10 +412,16 @@ class OrderBook:
             self.pm.create_position(order.trader_id, self.asset_name, order.side, avg_price, total_quantity, order.leverage, order.margin)
     
     def find_open_positions(self, _address: str, _order_side: Side) -> bool:
-        for p in self.pm.accounts[_address].positions:
-            if p.status == Status.OPEN and p.market_id == self.asset_name and _order_side != p.side:
+        account = self.pm.accounts.get(_address)
+        if account is None:
+            return False
+        for position in account.positions:
+            if position.status == Status.OPEN and \
+            position.market_id == self.asset_name and \
+            _order_side != position.side:
                 return True
         return False
+
 
 # market = OrderBook("BTC")
 
