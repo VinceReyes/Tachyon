@@ -75,7 +75,14 @@ class OrderBook:
 
     def send_limit_order(self, w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
         print("Simulating on-chain limit order — skipping Web3 transaction.")
-        return True
+        return {
+            "to": "0xMockPerpsAddress",
+            "from": trader_address,
+            "data": "0xdeadbeef",
+            "gas": 300000,
+            "gasPrice": 1000000000,
+            "value": 0,
+        }
         # contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
         # margin = int(_margin * PRICE_SCALE)

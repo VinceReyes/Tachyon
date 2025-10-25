@@ -145,6 +145,7 @@ def api_client(monkeypatch):
         }
 
     fake_engine = Mock()
+    fake_engine.order_id = 0
     fake_engine.snapshot.return_value = {
         "bids": [{"price": 0.4, "quantity": 1.0}],
         "asks": [{"price": 0.5, "quantity": 2.0}],
@@ -152,10 +153,13 @@ def api_client(monkeypatch):
     fake_engine.trade_events = [
         SimpleNamespace(trade_id=1, price=0.44, quantity=1.5),
     ]
-    fake_engine.w3 = object()
-    fake_engine.send_limit_order.return_value = _tx("limit")
-    fake_engine.send_market_order.return_value = _tx("market")
-    fake_engine.send_limit_order_removal.return_value = _tx("remove")
+    fake_engine.market_order = Mock()
+    fake_engine.remove_limit_order = Mock()
+
+    def _add_limit_order(*args, **kwargs):
+        fake_engine.order_id += 1
+
+    fake_engine.add_limit_order = Mock(side_effect=_add_limit_order)
 
     fake_pm = Mock()
     fake_pm.accounts = {
@@ -502,12 +506,18 @@ def test_server_limit_order_endpoint(api_client):
     }
     response = client.post("/tx/limit_order", json=payload)
     assert response.status_code == 200
-    assert response.json()["data"] == "limit_data"
-    fake_engine.send_limit_order.assert_called_once()
-    args, kwargs = fake_engine.send_limit_order.call_args
-    assert args[0] is fake_engine.w3
-    assert kwargs["_direction"] == Side.BUY
-    assert kwargs["trader_address"] == "0xTrader"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["order_id"] == fake_engine.order_id
+    assert body["orderbook"] == fake_engine.snapshot.return_value
+
+    fake_engine.add_limit_order.assert_called_once()
+    kwargs = fake_engine.add_limit_order.call_args.kwargs
+    assert kwargs["_trader_id"] == "0xTrader"
+    assert kwargs["_side"] == Side.BUY
+    assert kwargs["_price"] == 0.45
+    assert kwargs["_quantity"] == 2.0
+    fake_engine.snapshot.assert_called_once()
 
 
 def test_server_market_order_endpoint(api_client):
@@ -517,24 +527,48 @@ def test_server_market_order_endpoint(api_client):
         "direction": "sell",
         "leverage": 4,
         "margin": 200.0,
+        "price": 0.5,
+        "quantity": 1.25,
         "trader_address": "0xTrader",
     }
     response = client.post("/tx/market_order", json=payload)
     assert response.status_code == 200
-    assert response.json()["data"] == "market_data"
-    fake_engine.send_market_order.assert_called_once()
-    args, kwargs = fake_engine.send_market_order.call_args
-    assert kwargs["_direction"] == Side.SELL
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["orderbook"] == fake_engine.snapshot.return_value
+    assert body["trades"] == [trade.__dict__ for trade in fake_engine.trade_events]
+
+    fake_engine.market_order.assert_called_once()
+    kwargs = fake_engine.market_order.call_args.kwargs
+    assert kwargs["_trader_id"] == "0xTrader"
+    assert kwargs["_side"] == Side.SELL
+    assert kwargs["_price"] == 0.5
+    assert kwargs["_quantity"] == 1.25
+    fake_engine.snapshot.assert_called_once()
 
 
 def test_server_remove_limit_order_endpoint(api_client):
     client, fake_engine, _ = api_client
 
-    payload = {"trader_address": "0xTrader"}
+    payload = {
+        "trader_address": "0xTrader",
+        "order_id": 42,
+        "direction": "buy",
+        "price": 0.45,
+    }
     response = client.post("/tx/remove_limit_order", json=payload)
     assert response.status_code == 200
-    assert response.json()["data"] == "remove_data"
-    fake_engine.send_limit_order_removal.assert_called_once_with(fake_engine.w3, "0xTrader")
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["orderbook"] == fake_engine.snapshot.return_value
+
+    fake_engine.remove_limit_order.assert_called_once()
+    kwargs = fake_engine.remove_limit_order.call_args.kwargs
+    assert kwargs["_trader_id"] == "0xTrader"
+    assert kwargs["_order_id"] == 42
+    assert kwargs["_side"] == Side.BUY
+    assert kwargs["_price"] == 0.45
+    fake_engine.snapshot.assert_called_once()
 
 
 def test_server_trades_endpoint(api_client):

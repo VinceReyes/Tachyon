@@ -1,7 +1,6 @@
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, HTTPException
 from off_chain_systems.matching_engine import OrderBook, Side
 from off_chain_systems.position_manager import PositionManager
-from web3 import Web3
 import os
 from dotenv import load_dotenv
 import json
@@ -55,63 +54,71 @@ def get_perp_pricing():
     return pm.get_perp_price()
 
 @app.post("/tx/limit_order")
-def build_limit_order(order: dict = Body(...)):
-    direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
-    tx = engine.send_limit_order(
-        engine.w3,
-        _leverage=order["leverage"],
-        _margin=order["margin"],
-        _price=order["price"],
-        _quantity=order["quantity"],
-        _direction=direction_enum,
-        trader_address=order["trader_address"]
-    )
+def place_limit_order(order: dict = Body(...)):
+    try:
+        direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
+        engine.add_limit_order(
+            _trader_id=order["trader_address"],
+            _side=direction_enum,
+            _price=order["price"],
+            _quantity=order["quantity"],
+            _leverage=order["leverage"],
+            _margin=order["margin"],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
-        "to": tx["to"],
-        "from": tx["from"],
-        "data": tx["data"].hex() if hasattr(tx["data"], "hex") else tx["data"],
-        "gas": tx["gas"],
-        "gasPrice": tx["gasPrice"],
-        "value": tx.get("value", 0),
+        "status": "ok",
+        "order_id": engine.order_id,
+        "orderbook": engine.snapshot(),
     }
 
 @app.post("/tx/market_order")
-def build_market_order(order: dict = Body(...)):
-    direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
-    tx = engine.send_market_order(
-        engine.w3,
-        _margin=order["margin"],
-        _leverage=order["leverage"],
-        _direction=direction_enum,
-        trader_address=order["trader_address"]
-    )
+def place_market_order(order: dict = Body(...)):
+    try:
+        direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
+        engine.market_order(
+            _trader_id=order["trader_address"],
+            _side=direction_enum,
+            _price=order["price"],
+            _quantity=order["quantity"],
+            _leverage=order["leverage"],
+            _margin=order["margin"],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    recent_trades = [t.__dict__ for t in engine.trade_events[-20:]]
     return {
-        "to": tx["to"],
-        "from": tx["from"],
-        "data": tx["data"].hex() if hasattr(tx["data"], "hex") else tx["data"],
-        "gas": tx["gas"],
-        "gasPrice": tx["gasPrice"],
-        "value": tx.get("value", 0),
+        "status": "ok",
+        "orderbook": engine.snapshot(),
+        "trades": recent_trades,
     }
 
 @app.post("/tx/remove_limit_order")
-def build_limit_order_removal(order: dict = Body(...)):
-    trader_address = order["trader_address"]
-
-    tx = engine.send_limit_order_removal(
-        engine.w3,
-        trader_address
-    )
+def cancel_limit_order(order: dict = Body(...)):
+    try:
+        trader_address = order["trader_address"]
+        direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
+        engine.remove_limit_order(
+            _trader_id=trader_address,
+            _order_id=order["order_id"],
+            _side=direction_enum,
+            _price=order["price"],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
-        "to": tx["to"],
-        "from": tx["from"],
-        "data": tx["data"].hex() if hasattr(tx["data"], "hex") else tx["data"],
-        "gas": tx["gas"],
-        "gasPrice": tx["gasPrice"],
-        "value": tx.get("value", 0),
+        "status": "ok",
+        "orderbook": engine.snapshot(),
     }
 
 @app.get("/trades")
@@ -198,6 +205,4 @@ def seed_positions():
     )
 
     return {"status": "ok", "message": f"Seeded positions for {trader}"}
-
-
 
