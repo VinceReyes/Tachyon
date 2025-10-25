@@ -2,6 +2,7 @@ import os
 import requests
 import ast
 import time
+import json
 
 from web3 import Web3
 from dotenv import load_dotenv
@@ -11,7 +12,7 @@ load_dotenv()
 PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
 RPC_URL = os.environ.get('RPC_URL')
 ORACLE_ADDRESS = os.environ.get('ORACLE_ADDRESS')
-ORACLE_ABI = os.environ.get('ORACLE_ABI')
+ORACLE_ABI = json.loads(os.environ.get('ORACLE_ABI'))
 POLYMARKET_BASE_API = 'https://gamma-api.polymarket.com/events/slug/'
 URL_SUFFIX = os.environ.get('URL_SUFFIX')
 PRICE_SCALE = 10**6

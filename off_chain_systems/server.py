@@ -4,11 +4,12 @@ from off_chain_systems.position_manager import PositionManager
 from web3 import Web3
 import os
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
 PERPS_ADDRESS = os.getenv("PERPS_ADDRESS")
-PERPS_ABI = os.getenv("PERPS_ABI")
+PERPS_ABI = json.loads(os.getenv("PERPS_ABI"))
 RPC_URL = os.getenv("RPC_URL")
 MARKET_NAME = os.getenv("MARKET_NAME")
 
@@ -44,7 +45,6 @@ def get_open_positions(address: str):
         })
 
     return {"positions": positions_data}
-
 
 @app.get("/oracle_price")
 def get_oracle_pricing():

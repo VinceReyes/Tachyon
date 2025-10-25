@@ -159,18 +159,22 @@ def api_client(monkeypatch):
 
     fake_pm = Mock()
     fake_pm.accounts = {
-        "0xKnown": SimpleNamespace(
-            positions=[
-                SimpleNamespace(
-                    position_id=10,
-                    market_id="BTC",
-                    status=PMStatus.OPEN.value,
-                    quantity=1.25,
-                )
-            ]
-        )
+        "0xKnown": SimpleNamespace(positions=[
+            SimpleNamespace(
+                position_id=10,
+                market_id="BTC",
+                side=Side.BUY,
+                quantity=1.0,
+                entry_price=100.0,
+                leverage=5,
+                margin=20.0,
+                unrealized_pnl=0.0,
+                status=Status.OPEN
+            )
+        ])
     }
-    fake_pm.get_price.return_value = 0.42
+
+    fake_pm.get_perp_price.return_value = 0.42
 
     monkeypatch.setattr(server, "engine", fake_engine)
     monkeypatch.setattr(server, "pm", fake_pm)
@@ -392,7 +396,7 @@ def test_position_manager_update_pnl_buy_side(monkeypatch, position_manager):
     position = position_manager.accounts["0xAlice"].positions[0]
 
     # Force oracle to return a higher price
-    monkeypatch.setattr(position_manager, "get_price", lambda: 0.6)
+    monkeypatch.setattr(position_manager, "get_perp_price", lambda: 0.6)
 
     pnl = position_manager.update_pnl(position)
     expected = ((0.6 - 0.5) / 0.5) * (2 * 150)
@@ -470,14 +474,20 @@ def test_server_positions_endpoint_unknown(api_client):
     assert response.json() == {"positions": []}
 
 
-def test_server_oracle_price_endpoint(api_client):
+def test_server_price_endpoints(api_client):
     client, _, fake_pm = api_client
 
-    response = client.get("/oracle_price")
-    assert response.status_code == 200
-    assert response.json() == {"price": 0.42}
-    fake_pm.get_price.assert_called_once()
+    fake_pm.get_oracle_price.return_value = 0.42
+    fake_pm.get_perp_price.return_value = 0.37
 
+    oracle_response = client.get("/oracle_price")
+    assert oracle_response.status_code == 200
+    assert oracle_response.json() == 0.42
+
+    # --- Perp price endpoint ---
+    perp_response = client.get("/perp_price")
+    assert perp_response.status_code == 200
+    assert perp_response.json() == 0.37
 
 def test_server_limit_order_endpoint(api_client):
     client, fake_engine, _ = api_client

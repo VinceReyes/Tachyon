@@ -4,16 +4,16 @@ from web3 import Web3
 from dataclasses import dataclass
 from dotenv import load_dotenv
 from enum import Enum
-from off_chain_systems.matching_engine import OrderBook
+import json
 
 load_dotenv()
 
 PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
 RPC_URL = os.environ.get('RPC_URL')
 ORACLE_ADDRESS = os.environ.get('ORACLE_ADDRESS')
-ORACLE_ABI = os.environ.get("ORACLE_ABI")
+ORACLE_ABI = json.loads(os.environ.get("ORACLE_ABI"))
 PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
-PERPS_ABI = os.environ.get('PERPS_ABI')
+PERPS_ABI = json.loads(os.environ.get('PERPS_ABI'))
 PRICE_SCALE = 10**6
 
 class Side(Enum):

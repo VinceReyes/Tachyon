@@ -16,7 +16,7 @@ interface VAULT:
     def receive_margin(_amount: uint256) -> bool: nonpayable
 
 interface ORACLE:
-    def get_oracle_price() -> uint256: view
+    def get_perp_price() -> uint256: view
 
 # ------------------------------------------------------------------
 #                              STATE
@@ -87,8 +87,8 @@ def __init__(_authorized_vault_address: address, _market_id: uint256, _market_na
     self.last_funding_timestamp = block.timestamp
 
 @internal
-def _get_market_price() -> uint256:
-    return staticcall ORACLE(oracle_address).get_oracle_price()
+def _get_perp_price() -> uint256:
+    return staticcall ORACLE(oracle_address).get_perp_price()
 
 @internal
 def _get_funding_impact(pos: Position) -> int256:
@@ -118,9 +118,7 @@ def _calculate_health_factor(_address: address) -> int256:
     pos: Position = self.positions[_address]
 
     entry_price: uint256 = pos.entry_price
-    #TODO
-    # right now liquidations are determined by the oracle price, but eventially need to be refactored to get a mark price from the off chain matching engine that is a smoothed midpoint price to reference
-    mark_price: uint256 = self._get_market_price()
+    mark_price: uint256 = self._get_perp_price()
     margin: uint256 = pos.margin
     leverage: uint256 = pos.leverage
 

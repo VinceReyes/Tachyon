@@ -3,6 +3,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.table import Table
+from rich.prompt import Prompt
 from time import sleep
 import random
 import requests

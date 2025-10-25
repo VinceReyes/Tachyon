@@ -5,6 +5,7 @@ import time
 from web3 import Web3
 from dotenv import load_dotenv
 import os
+import json
 from off_chain_systems.position_manager import PositionManager
 
 load_dotenv()
@@ -12,7 +13,7 @@ load_dotenv()
 PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
 RPC_URL = os.environ.get('RPC_URL')
 PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
-PERPS_ABI = os.environ.get("PERPS_ABI")
+PERPS_ABI = json.loads(os.environ.get("PERPS_ABI"))
 PRICE_SCALE = 10**6
 
 class Side(Enum):

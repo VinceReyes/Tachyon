@@ -393,9 +393,12 @@ def test_can_liquidate_position(deploy_test_system, test_user, test_user_two):
 
     with boa.env.prank(owner):
         oracle.update_oracle(oracle_price)
+        oracle.update_perp(oracle_price)
 
     with boa.env.prank(test_user_two):
         perps.liquidate(test_user)
+        print("Actual vault balance:", usdc.balanceOf(vault.address))
+
 
     assert usdc.balanceOf(vault.address) == 10475 * SCALE
     assert usdc.balanceOf(test_user_two) == 25 * SCALE
