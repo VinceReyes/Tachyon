@@ -1,0 +1,69 @@
+import os
+import time
+import requests
+
+from web3 import Web3
+from dotenv import load_dotenv
+from off_chain_systems.position_manager import PositionManager
+
+load_dotenv()
+
+FUNDING_SCALE = 10**18
+PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
+RPC_URL = os.environ.get('RPC_URL')
+PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
+PERPS_ABI = os.environ.get('PERPS_ABI')
+BASE_URL = "http://127.0.0.1:8000"
+
+pm: PositionManager = PositionManager()
+
+def get_oracle_price():
+    r = float(requests.get(f"{BASE_URL}/oracle_price"))
+    return float(r.text)
+
+def get_perp_price():
+    r = float(requests.get(f"{BASE_URL}/perp_price"))
+    return float(r.text)
+
+def calculate_funding_rate():
+    oracle_price = get_oracle_price()
+    perp_price = get_perp_price()
+    funding_rate = (perp_price - oracle_price) / oracle_price
+    return funding_rate
+
+def update_funding_on_chain(funding_rate: float) -> bool:
+    try:
+        w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        if not w3.is_connected():
+            raise ValueError("Could not connect to specified RPC URL")
+        sender = w3.eth.account.from_key(PRIVATE_KEY)
+
+        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+
+        funding_rate_converted = int(funding_rate * FUNDING_SCALE)
+
+        tx_params = {
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender),
+            "gas": 300000,
+            "gasPrice": w3.to_wei(1, "gwei")
+        }
+
+        tx = contract.functions.update_funding(funding_rate_converted).build_transaction(tx_params)
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        print(f"[FundingKeeper] Sent tx {tx_hash.hex()} rate={funding_rate:.8f}")
+        return tx_hash
+    except Exception as e:
+        print(f"[FundingKeeper] Failed to update funding: {e}")
+        return None
+
+def main():
+    while True:
+        rate = calculate_funding_rate()
+        update_funding_on_chain(rate)
+        #change to 4 hours for production
+        time.sleep(30)
+    
+if __name__ == "__main__":
+    main()

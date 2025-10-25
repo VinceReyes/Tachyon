@@ -4,6 +4,7 @@ from web3 import Web3
 from dataclasses import dataclass
 from dotenv import load_dotenv
 from enum import Enum
+from off_chain_systems.matching_engine import OrderBook
 
 load_dotenv()
 
@@ -78,9 +79,10 @@ class Trade:
     maker_fee: float
 
 class PositionManager:
-    def __init__(self):
+    def __init__(self, orderbook=None):
         self.accounts = {}
         self.position_id: int = 0
+        self.orderbook = orderbook
         self.w3 = Web3(Web3.HTTPProvider(RPC_URL))
         if not self.w3.is_connected():
             raise ValueError("Could not connect to specified RPC URL")
@@ -91,13 +93,26 @@ class PositionManager:
         self.position_id += 1
         return self.position_id
 
-    def get_price(self) -> float:
+    def get_oracle_price(self) -> float:
         contract = self.w3.eth.contract(address=ORACLE_ADDRESS, abi=ORACLE_ABI)
 
         price: int = contract.functions.get_oracle_price().call()
         converted_price = float(price / PRICE_SCALE)
 
         return converted_price
+    
+    def get_perp_price(self) -> float:
+        if self.orderbook:
+            if len(self.orderbook.trade_events) > 0:
+                return self. orderbook.trade_events[-1].price
+        
+        best_bid = self.orderbook.get_best_bid()
+        best_ask = self.orderbook.get_best_ask()
+
+        if best_bid and best_ask:
+            return (best_bid + best_ask) / 2
+        
+        return self.get_oracle_price()
     
     def create_account(self, _address):
         if _address not in self.accounts:
@@ -136,7 +151,7 @@ class PositionManager:
     def update_pnl(self, _position: Position):
         if _position.status != Status.OPEN:
             raise ValueError("position is not open")
-        current_price: float = self.get_price()
+        current_price: float = self.get_perp_price()
 
         if _position.side == Side.BUY:
             price_differential = current_price - _position.entry_price

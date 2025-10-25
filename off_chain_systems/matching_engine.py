@@ -72,30 +72,32 @@ class OrderBook:
         self.w3.eth.default_account = account.address
         self.pm: PositionManager = _pm
 
-    def send_limit_order(w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
-        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+    def send_limit_order(self, w3: Web3, _leverage: int, _margin: float, _price: float, _quantity: float, _direction: Side, trader_address: str):
+        print("Simulating on-chain limit order — skipping Web3 transaction.")
+        return True
+        # contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
-        margin = int(_margin * PRICE_SCALE)
-        price = int(_price * PRICE_SCALE)
-        quantity = int(_quantity)
-        direction: bool = True if _direction == Side.BUY else False
+        # margin = int(_margin * PRICE_SCALE)
+        # price = int(_price * PRICE_SCALE)
+        # quantity = int(_quantity)
+        # direction: bool = True if _direction == Side.BUY else False
 
-        tx = contract.functions.add_limit_order(
-            _leverage,
-            margin,
-            price,
-            quantity,
-            direction
-        ).build_transaction({
-            "from": trader_address,
-            "nonce": w3.eth.get_transaction_count(trader_address),
-            "gas": 300000,
-            "gasPrice": w3.to_wei(1, "gwei")
-        })
+        # tx = contract.functions.add_limit_order(
+        #     _leverage,
+        #     margin,
+        #     price,
+        #     quantity,
+        #     direction
+        # ).build_transaction({
+        #     "from": trader_address,
+        #     "nonce": w3.eth.get_transaction_count(trader_address),
+        #     "gas": 300000,
+        #     "gasPrice": w3.to_wei(1, "gwei")
+        # })
 
-        return tx
+        # return tx
     
-    def send_limit_order_removal(w3: Web3, trader_address: str):
+    def send_limit_order_removal(self, w3: Web3, trader_address: str):
         contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
         tx = contract.functions.close_limit_order().build_transaction({
@@ -107,61 +109,67 @@ class OrderBook:
 
         return tx
     
-    def call_fill_limit_order(w3: Web3, _address: str, _quantity_to_fill: int):
-        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
-        sender = w3.eth.account.from_key(PRIVATE_KEY)
+    def call_fill_limit_order(self, w3: Web3, _address: str, _quantity_to_fill: int):
+        print(f"Simulating fill for {_address} with quantity {_quantity_to_fill} — skipping Web3 transaction.")
+        return True
+        # contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+        # sender = w3.eth.account.from_key(PRIVATE_KEY)
 
-        quantity_to_fill = _quantity_to_fill
+        # quantity_to_fill = _quantity_to_fill
 
-        tx_params = {
-            "from": sender,
-            "nonce": w3.eth.get_transaction_count(sender),
-            "gas": 300000,
-            "gasPrice": w3.to_wei(1, "gwei")
-        }
+        # tx_params = {
+        #     "from": sender,
+        #     "nonce": w3.eth.get_transaction_count(sender),
+        #     "gas": 300000,
+        #     "gasPrice": w3.to_wei(1, "gwei")
+        # }
 
-        tx = contract.functions.fill_limit_order(_address, quantity_to_fill).build_transaction(tx_params)
-        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        # tx = contract.functions.fill_limit_order(_address, quantity_to_fill).build_transaction(tx_params)
+        # signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        # tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        # receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-        return receipt
+        # return receipt
     
-    def send_open_position(w3: Web3, _margin: float, _leverage: int, _direction: Side, trader_address: str, _price: float):
-        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+    def send_open_position(self, w3: Web3, _margin: float, _leverage: int, _direction: Side, trader_address: str, _price: float):
+        print(f"Simulating open position for {trader_address} at {_price} (no Web3 tx).")
+        return True
+        # contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
-        margin = int(_margin * PRICE_SCALE)
-        direction: bool = True if _direction == Side.BUY else False
-        price: int = int(_price * PRICE_SCALE)
+        # margin = int(_margin * PRICE_SCALE)
+        # direction: bool = True if _direction == Side.BUY else False
+        # price: int = int(_price * PRICE_SCALE)
 
-        tx = contract.functions.open_position(margin, _leverage, direction, price).build_transaction({
-            "from": trader_address,
-            "nonce": w3.eth.get_transaction_count(trader_address),
-            "gas": 300000,
-            "gasPrice": w3.to_wei(1, "gwei")
-        })
+        # tx = contract.functions.open_position(margin, _leverage, direction, price).build_transaction({
+        #     "from": trader_address,
+        #     "nonce": w3.eth.get_transaction_count(trader_address),
+        #     "gas": 300000,
+        #     "gasPrice": w3.to_wei(1, "gwei")
+        # })
 
-        return tx
+        # return tx
     
-    def send_close_position(w3: Web3, trader_address: str, _price: float):
-        contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+    def send_close_position(self, w3: Web3, trader_address: str, _price: float):
+        print(f"Simulating close position for {trader_address} at {_price} (no Web3 tx).")
+        return True
+        # contract = w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
 
-        sender = w3.eth.account.from_key(PRIVATE_KEY)
+        # sender = w3.eth.account.from_key(PRIVATE_KEY)
 
-        price: int = int(_price * PRICE_SCALE)
+        # price: int = int(_price * PRICE_SCALE)
 
-        tx = contract.functions.close_position(trader_address, price).build_transaction({
-            "from": sender,
-            "nonce": w3.eth.get_transaction_count(sender),
-            "gas": 300000,
-            "gasPrice": w3.to_wei(1, "gwei")
-        })
+        # tx = contract.functions.close_position(trader_address, price).build_transaction({
+        #     "from": sender,
+        #     "nonce": w3.eth.get_transaction_count(sender),
+        #     "gas": 300000,
+        #     "gasPrice": w3.to_wei(1, "gwei")
+        # })
 
-        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        # signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        # tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        # receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-        return receipt
+        # return receipt
 
     def log_trade(self, order: Order, _fill_quantity, _taker_id, _maker_id, _taker_side, taker_order: Order) -> Trade:
         trade: Trade = Trade(
@@ -193,10 +201,16 @@ class OrderBook:
         return min(self.asks) if self.asks else None
     
     def snapshot(self) -> dict:
-        book_snapshot = {} 
-        book_snapshot["bids"] = self.bids
-        book_snapshot["asks"] = self.asks
-        return book_snapshot
+        def levels(book, reverse=False):
+            items = reversed(book.items()) if reverse else book.items()
+            return [
+                [price, sum(o.quantity - o.filled_quantity for o in orders)]
+                for price, orders in items
+            ]
+        return {
+            "bids": levels(self.bids, reverse=True),
+            "asks": levels(self.asks)
+        }
 
     def add_limit_order(
             self,

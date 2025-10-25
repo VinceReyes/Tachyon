@@ -11,5 +11,6 @@ dependencies = [
     "httpx>=0.28.1",
     "moccasin>=0.4.2",
     "sortedcontainers>=2.4.0",
+    "uvicorn>=0.38.0",
     "web3>=7.13.0",
 ]
