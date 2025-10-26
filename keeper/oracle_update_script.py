@@ -33,14 +33,32 @@ def get_yes_token_id() -> str:
 
     return yes_token[0]
 
-def get_yes_token_price(_token_id: str) -> float:
-    url = 'https://clob.polymarket.com/midpoint'
-    query = {'token_id': _token_id}
+def get_yes_token_price(_token_id: str) -> int:
+    url = "https://clob.polymarket.com/midpoint"
+    query = {"token_id": _token_id}
     r = requests.get(url, params=query)
+
     response = r.json()
-    price = int((response['mid']) * PRICE_SCALE)
-    
+    print("DEBUG midpoint response:", response)
+
+    mid_raw = response.get("mid")
+    if mid_raw is None:
+        raise ValueError("No 'mid' key found in Polymarket response")
+
+    # Convert safely: handle strings like '0.235'
+    try:
+        mid = float(mid_raw)
+    except ValueError:
+        import re
+        match = re.search(r"\d*\.\d+", str(mid_raw))
+        if not match:
+            raise ValueError(f"Could not parse midpoint value from {mid_raw}")
+        mid = float(match.group(0))
+
+    price = int(mid * PRICE_SCALE)
+    print(f"Parsed midpoint: {mid} → scaled oracle price: {price}")
     return price
+
 
 def init_web3() -> Web3:
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
@@ -68,7 +86,7 @@ def update_oracle(w3: Web3, _price: int):
 
 def keeper_loop():
     yes_token_id = get_yes_token_id()
-    w3 = init_web3(RPC_URL)
+    w3 = init_web3()
 
     while True:
         price = get_yes_token_price(yes_token_id)
@@ -77,7 +95,7 @@ def keeper_loop():
         
         update_oracle(w3, price)
 
-        time.sleep(3600)
+        time.sleep(10)
 
 def main():
     keeper_loop()

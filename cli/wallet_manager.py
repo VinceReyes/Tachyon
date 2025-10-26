@@ -1,17 +1,19 @@
 from web3 import Web3
 from eth_account import Account
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 class TraderWallet:
     def __init__(self, _rpc_url: str):
         self.web3 = Web3(Web3.HTTPProvider(_rpc_url))
-        self.private_key = os.getenv("TRADER_KEY")
+
+        self.private_key = input("\nEnter your private key (for Anvil or testnet wallet): ").strip()
+        if not self.private_key.startswith("0x"):
+            self.private_key = "0x" + self.private_key
+
         self.account = self.web3.eth.account.from_key(self.private_key)
         self.address = self.account.address
-    
+
+        print(f"Wallet connected: {self.address}")
+
     def sign_and_send(self, _tx_data):
         signed = self.web3.account.sign_transaction(_tx_data, self.private_key)
         tx_hash = self.web3.eth.send_raw_transaction(signed.raw_transaction)

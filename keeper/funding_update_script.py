@@ -91,7 +91,8 @@ def main():
         rate = calculate_funding_rate()
         update_funding_on_chain(w3, sender, rate, nonce + 1)
         #change to 4 hours for production
-        time.sleep(30)
+        print("cycle")
+        time.sleep(10)
     
 if __name__ == "__main__":
     main()

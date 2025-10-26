@@ -56,6 +56,7 @@ def get_perp_pricing():
 @app.post("/tx/limit_order")
 def place_limit_order(order: dict = Body(...)):
     try:
+        pm.create_account(order["trader_address"])
         direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
         engine.add_limit_order(
             _trader_id=order["trader_address"],
@@ -78,6 +79,7 @@ def place_limit_order(order: dict = Body(...)):
 @app.post("/tx/market_order")
 def place_market_order(order: dict = Body(...)):
     try:
+        pm.create_account(order["trader_address"])
         direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
         engine.market_order(
             _trader_id=order["trader_address"],
@@ -100,6 +102,7 @@ def place_market_order(order: dict = Body(...)):
 @app.post("/tx/remove_limit_order")
 def cancel_limit_order(order: dict = Body(...)):
     try:
+        pm.create_account(order["trader_address"])
         trader_address = order["trader_address"]
         engine.remove_limit_order(
             _trader_id=trader_address,
