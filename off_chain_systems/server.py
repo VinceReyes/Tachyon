@@ -67,6 +67,10 @@ def get_oracle_pricing():
 def get_perp_pricing():
     return pm.get_perp_price()
 
+@app.get("/funding_rate")
+def get_funding_rate():
+    return pm.get_funding_rate()
+
 @app.post("/tx/limit_order")
 def place_limit_order(order: dict = Body(...)):
     try:

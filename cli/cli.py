@@ -73,6 +73,23 @@ def fetch_positions(address: str):
     except Exception as e:
         return {"error": str(e)}
 
+def fetch_perp_price():
+    try:
+        r = requests.get(f"{BASE_URL}/perp_price")
+        return r.json() if r.ok else None
+    except Exception as exc:
+        safe_print(f"[red]Perp price error:[/red] {exc}")
+        return None
+
+def fetch_funding_rate():
+    try:
+        r = requests.get(f"{BASE_URL}/funding_rate")
+        return r.json() if r.ok else None
+    except Exception as exc:
+        safe_print(f"[red]Funding rate error:[/red] {exc}")
+        return None
+
+
 # --------------------------------------------------------------------
 # Table rendering
 # --------------------------------------------------------------------
@@ -138,6 +155,14 @@ def show_dashboard():
             while True:
                 orderbook_data = fetch_orderbook()
                 positions_data = fetch_positions(TRADER_ADDRESS)
+
+                perp_price = fetch_perp_price()
+                funding = fetch_funding_rate()
+
+                footer_text = "Status: Connected"
+                if perp_price is not None and funding is not None:
+                    footer_text += f" | Perp: {perp_price:.4f} | Funding: {funding:+.6%}"
+                layout["footer"].update(Panel(footer_text, style="bold green"))
 
                 orderbook_table = render_orderbook(orderbook_data)
                 positions_table = render_positions(positions_data)

@@ -15,6 +15,7 @@ ORACLE_ABI = json.loads(os.environ.get("ORACLE_ABI"))
 PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
 PERPS_ABI = json.loads(os.environ.get('PERPS_ABI'))
 PRICE_SCALE = 10**6
+FUNDING_SCALE = 10**18
 
 class Side(Enum):
     BUY = "buy"
@@ -224,6 +225,12 @@ class PositionManager:
         except Exception as e:
             print(f"Liquidation failed for {_address}: {e}")
             return False
+        
+    def get_funding_rate(self) -> float:
+        contract = self.w3.eth.contract(address=PERPS_ADDRESS, abi=PERPS_ABI)
+        raw = contract.functions.funding_rate_per_second().call()
+        return raw / FUNDING_SCALE
+
         
     def management_loop(self):
         while True:
