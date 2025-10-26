@@ -120,7 +120,7 @@ def render_positions(data: dict):
             pos["side"],
             f"{pos['size']:.2f}",
             f"{pos['entry']:.3f}",
-            f"[{pnl_color}]{pos['pnl']:.2%}[/{pnl_color}]"
+            f"[{pnl_color}]${pos['pnl']:.2f}[/{pnl_color}]"
         )
     return table
 

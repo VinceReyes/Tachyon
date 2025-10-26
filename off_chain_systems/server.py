@@ -1,9 +1,11 @@
 from fastapi import FastAPI, Body, HTTPException
 from off_chain_systems.matching_engine import OrderBook, Side
-from off_chain_systems.position_manager import PositionManager
+from off_chain_systems.position_manager import PositionManager, Status
 import os
 from dotenv import load_dotenv
 import json
+import threading
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
@@ -16,7 +18,16 @@ pm: PositionManager = PositionManager()
 engine: OrderBook = OrderBook(MARKET_NAME, pm)
 pm.orderbook = engine
 
-app = FastAPI(title="Tachyon Backend API")
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    thread = threading.Thread(target=pm.management_loop, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        pass
+
+app = FastAPI(title="Tachyon Backend API", lifespan=app_lifespan)
 
 @app.get("/orderbook")
 def get_orderbook():
@@ -31,6 +42,9 @@ def get_open_positions(address: str):
     # account is an Account object with a .positions list of Position objects
     positions_data = []
     for pos in account.positions:
+        if pos.status != Status.OPEN:
+            continue
+        pm.update_pnl(pos)
         positions_data.append({
             "position_id": pos.position_id,
             "market": pos.market_id,

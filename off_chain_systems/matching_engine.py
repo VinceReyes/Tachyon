@@ -6,7 +6,7 @@ from web3 import Web3
 from dotenv import load_dotenv
 import os
 import json
-from off_chain_systems.position_manager import PositionManager
+from off_chain_systems.position_manager import PositionManager, Status, Side
 
 load_dotenv()
 
@@ -16,19 +16,19 @@ PERPS_ADDRESS = os.environ.get('PERPS_ADDRESS')
 PERPS_ABI = json.loads(os.environ.get("PERPS_ABI"))
 PRICE_SCALE = 10**6
 
-class Side(Enum):
-    BUY = "buy"
-    SELL = "sell"
+# class Side(Enum):
+#     BUY = "buy"
+#     SELL = "sell"
 
 class OrderType(Enum):
     LIMIT = "limit"
     MARKET = "market"
 
-class Status(Enum):
-    FILLED = "filled"
-    CANCELLED = "cancelled"
-    PARTIALLY_FILLED = "partially_filled"
-    OPEN = "open"
+# class Status(Enum):
+#     FILLED = "filled"
+#     CANCELLED = "cancelled"
+#     PARTIALLY_FILLED = "partially_filled"
+#     OPEN = "open"
 
 @dataclass
 class Trade:
@@ -309,7 +309,7 @@ class OrderBook:
             del book[found_price]
 
         # Mark the order as cancelled
-        found_order.status = Status.CANCELLED
+        found_order.status = Status.CLOSED
         print(f"Removed limit order {found_order.order_id} for trader {_trader_id}")
 
         # Mirror on-chain cancel (simulated or real)
