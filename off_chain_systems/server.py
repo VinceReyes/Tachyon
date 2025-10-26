@@ -62,8 +62,7 @@ def place_limit_order(order: dict = Body(...)):
             _side=direction_enum,
             _price=order["price"],
             _quantity=order["quantity"],
-            _leverage=order["leverage"],
-            _margin=order["margin"],
+            _leverage=order["leverage"]
         )
     except KeyError as exc:
         raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc
@@ -83,10 +82,8 @@ def place_market_order(order: dict = Body(...)):
         engine.market_order(
             _trader_id=order["trader_address"],
             _side=direction_enum,
-            _price=order["price"],
             _quantity=order["quantity"],
-            _leverage=order["leverage"],
-            _margin=order["margin"],
+            _leverage=order["leverage"]
         )
     except KeyError as exc:
         raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc
@@ -104,12 +101,8 @@ def place_market_order(order: dict = Body(...)):
 def cancel_limit_order(order: dict = Body(...)):
     try:
         trader_address = order["trader_address"]
-        direction_enum = Side.BUY if order["direction"].lower() == "buy" else Side.SELL
         engine.remove_limit_order(
             _trader_id=trader_address,
-            _order_id=order["order_id"],
-            _side=direction_enum,
-            _price=order["price"],
         )
     except KeyError as exc:
         raise HTTPException(status_code=422, detail=f"Missing field: {exc.args[0]}") from exc

@@ -255,6 +255,16 @@ def open_position(_margin: uint256, _leverage: uint256, _direction: bool, _price
     assert _margin > 0
     assert _leverage > 0
 
+    if self.limit_orders[msg.sender].is_open:
+        margin_to_return: uint256 = self.limit_orders[msg.sender].margin
+        self.limit_orders[msg.sender].is_open = False
+        self.limit_orders[msg.sender].margin = 0
+        self.limit_orders[msg.sender].quantity = 0
+        self.limit_orders[msg.sender].price = 0
+        self.limit_orders[msg.sender].timestamp = 0
+        success: bool = extcall ERC20(margin_token_address).transfer(msg.sender, margin_to_return)
+        assert success, "failed to return margin from cancelled limit order"
+
     _entry_price: uint256 = _price
     assert _entry_price > 0, "Bad entry price"
 

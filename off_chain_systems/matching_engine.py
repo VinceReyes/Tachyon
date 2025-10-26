@@ -226,13 +226,25 @@ class OrderBook:
             _side: Side,
             _price: float,
             _quantity: float,
-            _leverage: int,
-            _margin: float
+            _leverage: int
     ):
         if _price >= 1:
             raise ValueError("Cannot set limit at 1")
         if _price <= 0:
             raise ValueError("Cannot set limit at 0")
+        if _leverage <= 0:
+            raise ValueError("Cannot enter 0 leverage")
+        
+        account = self.pm.accounts.get(_trader_id)
+        if account and any(pos.is_open for pos in account.positions):
+            raise ValueError("Cannot place limit order with an existing open position")
+
+        for price_level, orders in {**self.bids, **self.asks}.items():
+            if any(o.trader_id == _trader_id and o.status == Status.OPEN for o in orders):
+                raise ValueError("Trader already has an open limit order")
+
+        
+        _margin: float = (_price * _quantity) / float(_leverage)
 
         order: Order = Order(
             trader_id = _trader_id,
@@ -258,40 +270,99 @@ class OrderBook:
         else:
             book[order.price].append(order)
 
-    def remove_limit_order(self, _trader_id: str, _order_id: int, _side: Side, _price: float):
-        book = self.bids if _side == Side.BUY else self.asks
-        order_list = book[_price]
-        removal_index = None
+    def remove_limit_order(self, _trader_id: str):
+        """
+        Removes the trader's single open limit order, if one exists.
+        Automatically detects whether it's on the bid or ask side.
+        """
+        found_order = None
+        found_side = None
+        found_price = None
 
-        for i in range(len(order_list)):
-            order: Order = order_list[i]
-            if order.trader_id == _trader_id and order.order_id == _order_id:
-                removal_index = i
+        # Search both sides of the book for the trader's open limit order
+        for side, book in [("buy", self.bids), ("sell", self.asks)]:
+            for price_level, order_list in list(book.items()):
+                for order in order_list:
+                    if order.trader_id == _trader_id and order.status == Status.OPEN:
+                        found_order = order
+                        found_side = side
+                        found_price = price_level
+                        break
+                if found_order:
+                    break
+            if found_order:
                 break
-        
-        if removal_index is not None:
-            order_list.pop(removal_index)
+
+        if not found_order:
+            raise ValueError(f"No open limit order found for trader {_trader_id}")
+
+        # Remove the order from the book
+        book = self.bids if found_side == "buy" else self.asks
+        order_list = book[found_price]
+        order_list.remove(found_order)
 
         if not order_list:
-            del book[_price]
+            del book[found_price]
 
+        # Mark the order as cancelled
+        found_order.status = Status.CANCELLED
+        print(f"Removed limit order {found_order.order_id} for trader {_trader_id}")
+
+        # Mirror on-chain cancel (simulated or real)
         self.send_limit_order_removal(self.w3, _trader_id)
+
     
     def market_order(
             self,
             _trader_id: str,
             _side: Side,
-            _price: float,
             _quantity: float,
-            _leverage: int,
-            _margin: float,
+            _leverage: int
     ):
         if _quantity <= 0:
             raise ValueError("Cannot send 0 or negative quantity orders")
-        if _margin <= 0:
-            raise ValueError("Margin is <= 0, need more margin")
-        if _price <= 0:
-            raise ValueError("Negative price values not allowed")
+        if _leverage <= 0:
+            raise ValueError("Cannot enter 0 leverage")
+        
+        account = self.pm.accounts.get(_trader_id)
+        open_pos = None
+
+        if account:
+            for pos in account.positions:
+                if pos.status == Status.OPEN and pos.market_id == self.asset_name:
+                    open_pos = pos
+                    break
+
+        if open_pos:
+            same_side = (
+                (open_pos.side == "buy" and _side == Side.BUY)
+                or (open_pos.side == "sell" and _side == Side.SELL)
+            )
+            if same_side:
+                raise ValueError("Cannot open additional position in same direction — close first")
+            print(f"Trader {_trader_id} has open position on opposite side, treating order as close.")
+        
+        if open_pos and hasattr(open_pos, "quantity"):
+            if _quantity > open_pos.quantity:
+                print(f"Reducing close order from {_quantity} → {open_pos.quantity} to match open position size.")
+                _quantity = open_pos.quantity
+
+        for side, book in [("buy", self.bids), ("sell", self.asks)]:
+            for price_level, order_list in list(book.items()):
+                for order in list(order_list):
+                    if order.trader_id == _trader_id and order.status == Status.OPEN:
+                        print(f"Trader {_trader_id} has an active limit order. Cancelling before market execution.")
+                        self.remove_limit_order(_trader_id)
+                        break
+                else:
+                    continue
+                break
+        
+        _price: float = self.pm.get_perp_price()
+        if not isinstance(_price, (float, int)) or _price <= 0:
+            raise ValueError("Invalid perp price from helper")
+        
+        _margin: float = (_price * _quantity) / float(_leverage)
         
         order: Order = Order(
             trader_id = _trader_id,

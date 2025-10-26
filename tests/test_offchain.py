@@ -95,6 +95,7 @@ def mock_orderbook():
     fake_pm.accounts = {}
     fake_pm.create_position = Mock()
     fake_pm.close_position = Mock()
+    fake_pm.get_perp_price = Mock(return_value=0.5)
 
     ob = OrderBook(_asset_name="BTC", _pm=fake_pm)
 
@@ -116,7 +117,13 @@ def register_account(mock_orderbook):
 
     def _register(address: str, *, positions=None):
         positions = positions or []
-        mock_orderbook.pm.accounts[address] = SimpleNamespace(positions=list(positions))
+        normalized_positions = []
+        for pos in positions:
+            if not hasattr(pos, "is_open"):
+                setattr(pos, "is_open", getattr(pos, "status", None) == Status.OPEN)
+            normalized_positions.append(pos)
+
+        mock_orderbook.pm.accounts[address] = SimpleNamespace(positions=list(normalized_positions))
         return mock_orderbook.pm.accounts[address]
 
     return _register
@@ -173,7 +180,8 @@ def api_client(monkeypatch):
                 leverage=5,
                 margin=20.0,
                 unrealized_pnl=0.0,
-                status=Status.OPEN
+                status=Status.OPEN,
+                is_open=True,
             )
         ])
     }
@@ -199,7 +207,6 @@ def test_add_limit_order_creates_book_entry(mock_orderbook):
         _price=0.25,
         _quantity=0.5,
         _leverage=2,
-        _margin=100,
     )
 
     assert len(ob.bids) == 1
@@ -214,29 +221,22 @@ def test_add_limit_order_creates_book_entry(mock_orderbook):
 def test_remove_limit_order_removes_from_book(mock_orderbook):
     ob = mock_orderbook
 
-    ob.add_limit_order("0x1", Side.BUY, 0.25, 1.0, 2, 100)
-    ob.add_limit_order("0x1", Side.BUY, 0.25, 2.0, 2, 100)
-    assert len(ob.bids[0.25]) == 2
-
-    first_order = ob.bids[0.25][0]
-    ob.remove_limit_order(
-        _trader_id=first_order.trader_id,
-        _order_id=first_order.order_id,
-        _side=Side.BUY,
-        _price=0.25,
-    )
-
+    ob.add_limit_order("0x1", Side.BUY, 0.25, 1.0, 2)
     assert len(ob.bids[0.25]) == 1
+
+    ob.remove_limit_order(_trader_id="0x1")
+
+    assert 0.25 not in ob.bids
     ob.send_limit_order_removal.assert_called_once()
 
 
 def test_get_best_bid_and_ask(mock_orderbook):
     ob = mock_orderbook
 
-    ob.add_limit_order("0x1", Side.BUY, 0.20, 1.0, 2, 100)
-    ob.add_limit_order("0x2", Side.BUY, 0.30, 1.0, 2, 100)
-    ob.add_limit_order("0x3", Side.SELL, 0.40, 1.0, 2, 100)
-    ob.add_limit_order("0x4", Side.SELL, 0.50, 1.0, 2, 100)
+    ob.add_limit_order("0x1", Side.BUY, 0.20, 1.0, 2)
+    ob.add_limit_order("0x2", Side.BUY, 0.30, 1.0, 2)
+    ob.add_limit_order("0x3", Side.SELL, 0.40, 1.0, 2)
+    ob.add_limit_order("0x4", Side.SELL, 0.50, 1.0, 2)
 
     assert ob.get_best_bid() == 0.30
     assert ob.get_best_ask() == 0.40
@@ -244,8 +244,8 @@ def test_get_best_bid_and_ask(mock_orderbook):
 
 def test_snapshot_returns_both_books(mock_orderbook):
     ob = mock_orderbook
-    ob.add_limit_order("0x1", Side.BUY, 0.20, 1.0, 2, 100)
-    ob.add_limit_order("0x2", Side.SELL, 0.40, 1.0, 2, 100)
+    ob.add_limit_order("0x1", Side.BUY, 0.20, 1.0, 2)
+    ob.add_limit_order("0x2", Side.SELL, 0.40, 1.0, 2)
 
     snap = ob.snapshot()
     assert "bids" in snap and "asks" in snap
@@ -257,9 +257,9 @@ def test_add_limit_order_rejects_invalid_prices(mock_orderbook):
     ob = mock_orderbook
 
     with pytest.raises(ValueError):
-        ob.add_limit_order("0x1", Side.BUY, 1.0, 1.0, 2, 100)
+        ob.add_limit_order("0x1", Side.BUY, 1.0, 1.0, 2)
     with pytest.raises(ValueError):
-        ob.add_limit_order("0x1", Side.SELL, 0.0, 1.0, 2, 100)
+        ob.add_limit_order("0x1", Side.SELL, 0.0, 1.0, 2)
 
     ob.send_limit_order.assert_not_called()
 
@@ -267,11 +267,8 @@ def test_add_limit_order_rejects_invalid_prices(mock_orderbook):
 def test_remove_limit_order_clears_price_level_when_empty(mock_orderbook):
     ob = mock_orderbook
 
-    ob.add_limit_order("0x1", Side.SELL, 0.40, 1.0, 2, 100)
-    order = ob.asks[0.40][0]
-
-    ob.remove_limit_order(order.trader_id, order.order_id, order.side, order.price)
-
+    ob.add_limit_order("0x1", Side.SELL, 0.40, 1.0, 2)
+    ob.remove_limit_order("0x1")
     assert 0.40 not in ob.asks
     ob.send_limit_order_removal.assert_called_once()
 
@@ -282,10 +279,12 @@ def test_market_order_buy_consumes_levels_and_opens_position(mock_orderbook, reg
     register_account("0xMakerB")
     register_account("0xBuyer")
 
-    ob.add_limit_order("0xMakerA", Side.SELL, 0.40, 1.0, 3, 100)
-    ob.add_limit_order("0xMakerB", Side.SELL, 0.45, 2.0, 4, 150)
+    ob.add_limit_order("0xMakerA", Side.SELL, 0.40, 1.0, 3)
+    ob.add_limit_order("0xMakerB", Side.SELL, 0.45, 2.0, 4)
 
-    ob.market_order("0xBuyer", Side.BUY, 0.50, 3.0, 5, 200)
+    ob.pm.get_perp_price.return_value = 0.45
+
+    ob.market_order("0xBuyer", Side.BUY, 3.0, 5)
 
     assert not ob.asks
     assert len(ob.trade_events) == 2
@@ -306,7 +305,8 @@ def test_market_order_buy_consumes_levels_and_opens_position(mock_orderbook, reg
     assert total_qty == pytest.approx(3.0)
     assert avg_price == pytest.approx((0.40 * 1.0 + 0.45 * 2.0) / 3.0)
     assert leverage == 5
-    assert margin == 200
+    expected_margin = (ob.pm.get_perp_price.return_value * total_qty) / leverage
+    assert margin == pytest.approx(expected_margin)
 
 
 def test_market_order_sell_closes_existing_position(mock_orderbook, register_account):
@@ -317,9 +317,11 @@ def test_market_order_sell_closes_existing_position(mock_orderbook, register_acc
         positions=[SimpleNamespace(status=Status.OPEN, market_id="BTC", side=Side.BUY)],
     )
 
-    ob.add_limit_order("0xMakerBid", Side.BUY, 0.55, 1.5, 3, 120)
+    ob.add_limit_order("0xMakerBid", Side.BUY, 0.55, 1.5, 3)
 
-    ob.market_order("0xSeller", Side.SELL, 0.50, 1.5, 4, 90)
+    ob.pm.get_perp_price.return_value = 0.55
+
+    ob.market_order("0xSeller", Side.SELL, 1.5, 4)
 
     assert not ob.bids
     assert len(ob.trade_events) == 1
@@ -327,7 +329,15 @@ def test_market_order_sell_closes_existing_position(mock_orderbook, register_acc
     ob.send_open_position.assert_not_called()
     ob.pm.close_position.assert_called_once_with("0xSeller", "BTC", pytest.approx(1.5), pytest.approx(0.55))
     # Maker receives a new position for the filled order.
-    ob.pm.create_position.assert_any_call("0xMakerBid", "BTC", Side.BUY, 0.55, 1.5, 3, 120)
+    maker_fill_call = next(entry for entry in ob.pm.create_position.call_args_list if entry[0][0] == "0xMakerBid")
+    _, maker_asset, maker_side, maker_price, maker_qty, maker_leverage, maker_margin = maker_fill_call[0]
+    assert maker_asset == "BTC"
+    assert maker_side == Side.BUY
+    assert maker_price == pytest.approx(0.55)
+    assert maker_qty == pytest.approx(1.5)
+    assert maker_leverage == 3
+    expected_maker_margin = (maker_price * maker_qty) / maker_leverage
+    assert maker_margin == pytest.approx(expected_maker_margin)
 
 
 def test_market_order_raises_without_depth(mock_orderbook, register_account):
@@ -335,20 +345,21 @@ def test_market_order_raises_without_depth(mock_orderbook, register_account):
     register_account("0xBuyer")
 
     with pytest.raises(ValueError, match="No book depth"):
-        ob.market_order("0xBuyer", Side.BUY, 0.30, 1.0, 2, 100)
+        ob.market_order("0xBuyer", Side.BUY, 1.0, 2)
 
 
 @pytest.mark.parametrize(
-    "kwargs,expected_message",
+    "kwargs,price_return,expected_message",
     [
-        ({"_side": Side.BUY, "_price": 0.40, "_quantity": 0.0, "_leverage": 2, "_margin": 100}, "Cannot send 0 or negative quantity orders"),
-        ({"_side": Side.SELL, "_price": 0.40, "_quantity": 1.0, "_leverage": 2, "_margin": 0}, "Margin is <= 0"),
-        ({"_side": Side.BUY, "_price": 0.0, "_quantity": 1.0, "_leverage": 2, "_margin": 100}, "Negative price values not allowed"),
+        ({"_side": Side.BUY, "_quantity": 0.0, "_leverage": 2}, 0.5, "Cannot send 0 or negative quantity orders"),
+        ({"_side": Side.SELL, "_quantity": 1.0, "_leverage": 0}, 0.5, "Cannot enter 0 leverage"),
+        ({"_side": Side.BUY, "_quantity": 1.0, "_leverage": 2}, 0.0, "Invalid perp price from helper"),
     ],
 )
-def test_market_order_rejects_invalid_inputs(mock_orderbook, register_account, kwargs, expected_message):
+def test_market_order_rejects_invalid_inputs(mock_orderbook, register_account, kwargs, price_return, expected_message):
     ob = mock_orderbook
     register_account("0xTrader")
+    ob.pm.get_perp_price.return_value = price_return
 
     with pytest.raises(ValueError, match=expected_message):
         ob.market_order("0xTrader", **kwargs)
@@ -499,7 +510,6 @@ def test_server_limit_order_endpoint(api_client):
     payload = {
         "direction": "buy",
         "leverage": 3,
-        "margin": 150.0,
         "price": 0.45,
         "quantity": 2.0,
         "trader_address": "0xTrader",
@@ -517,6 +527,8 @@ def test_server_limit_order_endpoint(api_client):
     assert kwargs["_side"] == Side.BUY
     assert kwargs["_price"] == 0.45
     assert kwargs["_quantity"] == 2.0
+    assert kwargs["_leverage"] == 3
+    assert "_margin" not in kwargs
     fake_engine.snapshot.assert_called_once()
 
 
@@ -526,8 +538,6 @@ def test_server_market_order_endpoint(api_client):
     payload = {
         "direction": "sell",
         "leverage": 4,
-        "margin": 200.0,
-        "price": 0.5,
         "quantity": 1.25,
         "trader_address": "0xTrader",
     }
@@ -542,8 +552,10 @@ def test_server_market_order_endpoint(api_client):
     kwargs = fake_engine.market_order.call_args.kwargs
     assert kwargs["_trader_id"] == "0xTrader"
     assert kwargs["_side"] == Side.SELL
-    assert kwargs["_price"] == 0.5
     assert kwargs["_quantity"] == 1.25
+    assert kwargs["_leverage"] == 4
+    assert "_price" not in kwargs
+    assert "_margin" not in kwargs
     fake_engine.snapshot.assert_called_once()
 
 
@@ -552,9 +564,6 @@ def test_server_remove_limit_order_endpoint(api_client):
 
     payload = {
         "trader_address": "0xTrader",
-        "order_id": 42,
-        "direction": "buy",
-        "price": 0.45,
     }
     response = client.post("/tx/remove_limit_order", json=payload)
     assert response.status_code == 200
@@ -565,9 +574,6 @@ def test_server_remove_limit_order_endpoint(api_client):
     fake_engine.remove_limit_order.assert_called_once()
     kwargs = fake_engine.remove_limit_order.call_args.kwargs
     assert kwargs["_trader_id"] == "0xTrader"
-    assert kwargs["_order_id"] == 42
-    assert kwargs["_side"] == Side.BUY
-    assert kwargs["_price"] == 0.45
     fake_engine.snapshot.assert_called_once()
 
 
